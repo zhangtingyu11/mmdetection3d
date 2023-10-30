@@ -241,8 +241,11 @@ class LoadImageFromFileMono3D(LoadImageFromFile):
         # for kitti dataset, we load 'CAM2' image.
         # for nuscenes dataset, we load 'CAM_FRONT' image.
 
+        #* 对于KITTI数据集来说要加载'CAM2'图像
         if 'CAM2' in results['images']:
+            #* 文件的路径
             filename = results['images']['CAM2']['img_path']
+            #* 相机到图像平面的转换矩阵
             results['cam2img'] = results['images']['CAM2']['cam2img']
         elif len(list(results['images'].keys())) == 1:
             camera_type = list(results['images'].keys())[0]
@@ -264,8 +267,10 @@ class LoadImageFromFileMono3D(LoadImageFromFile):
                 raise e
         if self.to_float32:
             img = img.astype(np.float32)
-
+        
+        #* 图像, 对KITTI来说是[height, width, 3]
         results['img'] = img
+        #* 图像尺寸是一样的, 对KITTI来说是[height, width]
         results['img_shape'] = img.shape[:2]
         results['ori_shape'] = img.shape[:2]
 

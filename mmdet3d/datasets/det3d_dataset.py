@@ -374,12 +374,15 @@ class Det3DDataset(BaseDataset):
         input_dict = copy.deepcopy(ori_input_dict)
 
         # box_type_3d (str): 3D box type.
+        #* 包围框类型, 在KITTI数据集中是<class 'mmdet3d.structures.bbox_3d.cam_box3d.CameraInstance3DBoxes'>
         input_dict['box_type_3d'] = self.box_type_3d
         # box_mode_3d (str): 3D box mode.
+        #* 3D包围框模式, 在KITTI数据集下是<Box3DMode.CAM: 1>
         input_dict['box_mode_3d'] = self.box_mode_3d
 
         # pre-pipline return None to random another in `__getitem__`
         if not self.test_mode and self.filter_empty_gt:
+            #* 如果这一帧里面没有GT包围框, 就返回None
             if len(input_dict['ann_info']['gt_labels_3d']) == 0:
                 return None
 
