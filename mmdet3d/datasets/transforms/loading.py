@@ -1058,12 +1058,29 @@ class LoadAnnotations3D(LoadAnnotations):
             dict: The dict containing loaded 3D bounding box, label, mask and
             semantic segmentation annotations.
         """
+        """
+        调用父类的方法
+        if self.with_bbox: 'gt_bboxes', 存储2D包围框, shape为[包围框个数, 4]的np.array
+        if self.with_label: 'gt_bboxes_labels', 存储2D包围框的类别, shape为[包围框个数, ]的np.array
+        if self.self.with_mask: 暂时没用到
+        if self.with_seg: 暂时没用到
+        """
         results = super().transform(results)
         if self.with_bbox_3d:
+            #* 对于KITTI而言, 会新增一个'gt_bboxes_3d', 存储CameraInstance3DBoxes实例
             results = self._load_bboxes_3d(results)
         if self.with_bbox_depth:
+            #TODO 需要确认一下KITTI信息的生成方式
+            """
+            投影的知识:
+                3D齐次点[x, y, z, 1]投影到图像上会生成[x1, y1, z1], 其中深度为z1
+                而在图像上的2D坐标就为[x1/z1, y1/z1]
+            对于KITTI而言, 会新增一个'depths', 用来存储每个物体的深度, 深度通过上面计算得到, 尺寸为[包围框个数, ]的np.array
+                          还会新增一个'centers_2d', 用来存储每个物体的3D中心点在图像上的投影, 尺寸为[包围框个数, 2]的np.array
+            """
             results = self._load_bboxes_depth(results)
         if self.with_label_3d:
+            #* 存储3D包围框的label, 尺寸为[包围框个数, ]的np.array
             results = self._load_labels_3d(results)
         if self.with_attr_label:
             results = self._load_attr_labels(results)
