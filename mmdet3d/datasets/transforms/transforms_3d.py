@@ -164,6 +164,7 @@ class RandomFlip3D(RandomFlip):
                         direction, points=input_dict['points'])
                 else:
                     # vision-only detection
+                    #* 因为是针对图像旋转, 不涉及点云, 因此只旋转包围框
                     input_dict['gt_bboxes_3d'].flip(direction)
             else:
                 input_dict['points'].flip(direction)
@@ -171,7 +172,13 @@ class RandomFlip3D(RandomFlip):
         if 'centers_2d' in input_dict:
             assert self.sync_2d is True and direction == 'horizontal', \
                 'Only support sync_2d=True and horizontal flip with images'
+            #* input_dict['img_shape']为元组: (height, width)
             w = input_dict['img_shape'][1]
+            """
+            input_dict['centers_2d']为[包围框数量, 2]的numpy数组
+            input_dict['centers_2d'][..., 0]表示只取最后一维
+            因为翻转了, 所以中心坐标也要翻转
+            """
             input_dict['centers_2d'][..., 0] = \
                 w - input_dict['centers_2d'][..., 0]
             # need to modify the horizontal position of camera center
@@ -179,6 +186,8 @@ class RandomFlip3D(RandomFlip):
             # ['cam2img'][0][2] = c_u
             # see more details and examples at
             # https://github.com/open-mmlab/mmdetection3d/pull/744
+            #TODO 找到更合理的解释
+            #* 相机水平翻转后主点x坐标应该变为w-c_u(From chatgpt)
             input_dict['cam2img'][0][2] = w - input_dict['cam2img'][0][2]
 
     def _flip_on_direction(self, results: dict) -> None:
@@ -222,10 +231,12 @@ class RandomFlip3D(RandomFlip):
         """
         # flip 2D image and its annotations
         if 'img' in input_dict:
+            #* 会随机选择翻转或者不翻转, 如果翻转的话, 对于图像来说也只会左右翻转
             super(RandomFlip3D, self).transform(input_dict)
 
         if self.sync_2d and 'img' in input_dict:
             input_dict['pcd_horizontal_flip'] = input_dict['flip']
+            #* self.sync_2d=True表明在图像上也要翻转, 图像不能上下翻转
             input_dict['pcd_vertical_flip'] = False
         else:
             if 'pcd_horizontal_flip' not in input_dict:
@@ -242,6 +253,7 @@ class RandomFlip3D(RandomFlip):
 
         if input_dict['pcd_horizontal_flip']:
             self.random_flip_data_3d(input_dict, 'horizontal')
+            #* 记录变换的顺序, 加上水平翻转
             input_dict['transformation_3d_flow'].extend(['HF'])
         if input_dict['pcd_vertical_flip']:
             self.random_flip_data_3d(input_dict, 'vertical')
@@ -1862,16 +1874,22 @@ class RandomShiftScale(BaseTransform):
         size = np.array([width, height], dtype=np.float32)
 
         if random.random() < self.aug_prob:
+            #* shift=平移, scale=缩放
             shift, scale = self.shift_scale[0], self.shift_scale[1]
+            #* 平移的范围在[-shift, shift]之间, 中间按0.1间隔划分
             shift_ranges = np.arange(-shift, shift + 0.1, 0.1)
+            #* 中心点偏移
             center[0] += size[0] * random.choice(shift_ranges)
             center[1] += size[1] * random.choice(shift_ranges)
+            #* 缩放的范围为[1-scale, 1+scale], 间隔为0.1
             scale_ranges = np.arange(1 - scale, 1 + scale + 0.1, 0.1)
+            #* 尺寸随机
             size *= random.choice(scale_ranges)
             results['affine_aug'] = True
         else:
             results['affine_aug'] = False
 
+        #* 记录平移和缩放后的中心点和尺寸
         results['center'] = center
         results['size'] = size
 

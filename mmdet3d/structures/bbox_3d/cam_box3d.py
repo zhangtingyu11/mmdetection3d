@@ -256,8 +256,14 @@ class CameraInstance3DBoxes(BaseInstance3DBoxes):
         """
         assert bev_direction in ('horizontal', 'vertical')
         if bev_direction == 'horizontal':
+            #* 0::7可能是除了x外还有vx要翻转
             self.tensor[:, 0::7] = -self.tensor[:, 0::7]
             if self.with_yaw:
+                """
+                KITTI相机坐标系 向右为x轴, 向前为z轴, 向下为y轴
+                包围框的角度为和x轴的夹角, 顺时针为正
+                如果左右翻转(也就是沿着z轴翻转), 角度应该是pi-yaw
+                """
                 self.tensor[:, 6] = -self.tensor[:, 6] + np.pi
         elif bev_direction == 'vertical':
             self.tensor[:, 2::7] = -self.tensor[:, 2::7]
