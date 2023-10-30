@@ -1690,6 +1690,7 @@ class AffineResize(BaseTransform):
 
         trans_affine = self._get_transform_matrix(center, size, self.img_scale)
 
+        #* 根据上面的结果进行仿射变换
         img = cv2.warpAffine(img, trans_affine[:2, :], self.img_scale)
 
         if isinstance(self.down_ratio, tuple):
@@ -1700,6 +1701,7 @@ class AffineResize(BaseTransform):
                 for ratio in self.down_ratio
             ]  # (3, 3)
         else:
+            #TODO 为什么要四倍下采样
             trans_mat = self._get_transform_matrix(
                 center, size, (self.img_scale[0] // self.down_ratio,
                                self.img_scale[1] // self.down_ratio))
@@ -1713,14 +1715,17 @@ class AffineResize(BaseTransform):
             self._affine_bboxes(results, trans_affine)
 
         if 'centers_2d' in results:
+            #* centers_2d也应用仿射变换
             centers2d = self._affine_transform(results['centers_2d'],
                                                trans_affine)
+            #* 需要保证投影的中心点在图像上
             valid_index = (centers2d[:, 0] >
                            0) & (centers2d[:, 0] <
                                  self.img_scale[0]) & (centers2d[:, 1] > 0) & (
                                      centers2d[:, 1] < self.img_scale[1])
             results['centers_2d'] = centers2d[valid_index]
 
+            #* 其他的值也要过滤
             if 'gt_bboxes' in results:
                 results['gt_bboxes'] = results['gt_bboxes'][valid_index]
                 if 'gt_bboxes_labels' in results:
@@ -1750,10 +1755,11 @@ class AffineResize(BaseTransform):
                 image to the network input image size.
                 shape: (3, 3)
         """
-
+        #* 2D包围框, [包围框个数, 4]
         bboxes = results['gt_bboxes']
         bboxes[:, :2] = self._affine_transform(bboxes[:, :2], matrix)
         bboxes[:, 2:] = self._affine_transform(bboxes[:, 2:], matrix)
+        #* 限制包围框的范围在图像内
         if self.bbox_clip_border:
             bboxes[:, [0, 2]] = bboxes[:, [0, 2]].clip(0,
                                                        self.img_scale[0] - 1)
@@ -1773,6 +1779,13 @@ class AffineResize(BaseTransform):
 
         Returns:
             np.ndarray: Transformed points.
+        """
+        """
+        进行仿射变换的一般操作
+        仿射变化是一个3*3的矩阵, 2D点是[N, 2]
+        将2D点变成齐次坐标[N, 3],再转置成[3, N]
+        两个相乘得到[3, N], 再转置[N, 3]
+        取前两维[N, 2]
         """
         num_points = points.shape[0]
         hom_points_2d = np.concatenate((points, np.ones((num_points, 1))),
@@ -1798,11 +1811,13 @@ class AffineResize(BaseTransform):
         dst_w = output_scale[0]
         dst_h = output_scale[1]
 
+        # TODO 不知道为什么要计算src_w*0.5
         src_dir = np.array([0, src_w * -0.5])
         dst_dir = np.array([0, dst_w * -0.5])
 
         src = np.zeros((3, 2), dtype=np.float32)
         dst = np.zeros((3, 2), dtype=np.float32)
+        #* 原图的中心点对应变换后的图的中心点
         src[0, :] = center
         src[1, :] = center + src_dir
         dst[0, :] = np.array([dst_w * 0.5, dst_h * 0.5])
@@ -1811,6 +1826,7 @@ class AffineResize(BaseTransform):
         src[2, :] = self._get_ref_point(src[0, :], src[1, :])
         dst[2, :] = self._get_ref_point(dst[0, :], dst[1, :])
 
+        #* 根据三个点的对应关系求仿射变换
         get_matrix = cv2.getAffineTransform(src, dst)
 
         matrix = np.concatenate((get_matrix, [[0., 0., 1.]]))
