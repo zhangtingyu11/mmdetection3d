@@ -164,6 +164,7 @@ class Pack3DDetInputs(BaseTransform):
                 # Refer to https://github.com/open-mmlab/mmdetection/pull/9533
                 # for more details
                 if img.flags.c_contiguous:
+                    #* 转成torch.tensor, 类型为torch.float32, 尺寸为[3, height, width]
                     img = to_tensor(img).permute(2, 0, 1).contiguous()
                 else:
                     img = to_tensor(
@@ -180,8 +181,10 @@ class Pack3DDetInputs(BaseTransform):
             if isinstance(results[key], list):
                 results[key] = [to_tensor(res) for res in results[key]]
             else:
+                #* 转成torch.tensor, 类型为torch.float32, 尺寸为[3, height, width]
                 results[key] = to_tensor(results[key])
         if 'gt_bboxes_3d' in results:
+            #* 如果是BaseInstance3DBoxes(包括CameraInstance3DBoxes)就不需要转
             if not isinstance(results['gt_bboxes_3d'], BaseInstance3DBoxes):
                 results['gt_bboxes_3d'] = to_tensor(results['gt_bboxes_3d'])
 
@@ -218,20 +221,27 @@ class Pack3DDetInputs(BaseTransform):
             elif 'lidar_points' in results:
                 if key in results['lidar_points']:
                     data_metas[key] = results['lidar_points'][key]
+        #* data_sample的_metainfo_fields包含data_metas的所有的键
+        #* 可以直接通过.来访问data_metas的键值对, 比如data_sample.cam2img也就是data_metas['cam2img']
         data_sample.set_metainfo(data_metas)
 
         inputs = {}
         for key in self.keys:
             if key in results:
+                #* self.INPUTS_KEYS为['points', 'img'], 这些都是模型的输入
                 if key in self.INPUTS_KEYS:
                     inputs[key] = results[key]
+                #* self.INSTANCEDATA_3D_KEYS为['gt_bboxes_3d', 'gt_labels_3d', 'attr_labels', 'depths', 'centers_2d']
                 elif key in self.INSTANCEDATA_3D_KEYS:
+                    #* _remove_prefix, 是去除前面的gt_
                     gt_instances_3d[self._remove_prefix(key)] = results[key]
+                #* self.INSTANCEDATA_2D_KEYS为['gt_bboxes', 'gt_bboxes_labels']
                 elif key in self.INSTANCEDATA_2D_KEYS:
                     if key == 'gt_bboxes_labels':
                         gt_instances['labels'] = results[key]
                     else:
                         gt_instances[self._remove_prefix(key)] = results[key]
+                #* self.SEG_KEYS包括['gt_seg_map', 'pts_instance_mask', 'pts_semantic_mask', 'gt_semantic_seg']
                 elif key in self.SEG_KEYS:
                     gt_pts_seg[self._remove_prefix(key)] = results[key]
                 else:
@@ -240,6 +250,7 @@ class Pack3DDetInputs(BaseTransform):
                                               f'to put {key} to '
                                               f'corresponding field')
 
+        #* data_sample的_data_fields加上了'gt_instances_3d', 'gt_instances', 'gt_pts_seg'
         data_sample.gt_instances_3d = gt_instances_3d
         data_sample.gt_instances = gt_instances
         data_sample.gt_pts_seg = gt_pts_seg
@@ -249,6 +260,16 @@ class Pack3DDetInputs(BaseTransform):
             data_sample.eval_ann_info = None
 
         packed_results = dict()
+        """
+        packed_results包含两个键:
+        data_samples:
+            这里面存储着两类数据:
+                _metainfo_fields和_data_fields
+                _metainfo_fields里面存着数据增强的一些操作, 还有一个标定的参数
+                _data_fields里面存着包围框的信息
+        inputs:
+            这里面存着输入数据, 一般是图像或者点云
+        """
         packed_results['data_samples'] = data_sample
         packed_results['inputs'] = inputs
 
