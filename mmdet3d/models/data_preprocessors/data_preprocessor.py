@@ -139,6 +139,10 @@ class Det3DDataPreprocessor(DetDataPreprocessor):
         Returns:
             dict or List[dict]: Data in the same format as the model input.
         """
+        """
+        data是一个字典, 包含两个键'data_samples', 'inputs'
+            每个键对应的值都是包含batch_size个对象的列表
+        """
         if isinstance(data, list):
             num_augs = len(data)
             aug_batch_data = []
@@ -194,6 +198,7 @@ class Det3DDataPreprocessor(DetDataPreprocessor):
                     })
 
                 if self.boxtype2tensor:
+                    #* 将包围框的信息从BaseBoxes转成torch.tensor
                     samplelist_boxtype2tensor(data_samples)
                 if self.pad_mask:
                     self.pad_gt_masks(data_samples)
@@ -210,6 +215,7 @@ class Det3DDataPreprocessor(DetDataPreprocessor):
     def preprocess_img(self, _batch_img: Tensor) -> Tensor:
         # channel transform
         if self._channel_conversion:
+            #* BGR->RGB
             _batch_img = _batch_img[[2, 1, 0], ...]
         # Convert to float after channel conversion to ensure
         # efficiency
@@ -221,6 +227,7 @@ class Det3DDataPreprocessor(DetDataPreprocessor):
                     'If the mean has 3 values, the input tensor '
                     'should in shape of (3, H, W), but got the '
                     f'tensor with shape {_batch_img.shape}')
+            #* 将图像减去均值除以标准差
             _batch_img = (_batch_img - self.mean) / self.std
         return _batch_img
 
@@ -237,6 +244,7 @@ class Det3DDataPreprocessor(DetDataPreprocessor):
         Returns:
             dict: Data in the same format as the model input.
         """
+        #* 将tensor转移到GPU上
         data = self.cast_data(data)  # type: ignore
 
         if 'img' in data['inputs']:
@@ -247,6 +255,11 @@ class Det3DDataPreprocessor(DetDataPreprocessor):
                 img_dim = _batch_imgs[0].dim()
                 for _batch_img in _batch_imgs:
                     if img_dim == 3:  # standard img
+                        """
+                        预处理可能有的操作:
+                            将BGR转换成RGB
+                            减去图像的均值再除以标准差
+                        """
                         _batch_img = self.preprocess_img(_batch_img)
                     elif img_dim == 4:
                         _batch_img = [
@@ -292,7 +305,7 @@ class Det3DDataPreprocessor(DetDataPreprocessor):
                     'Output of `cast_data` should be a list of dict '
                     'or a tuple with inputs and data_samples, but got '
                     f'{type(data)}: {data}')
-
+            #* imgs存放的是尺寸为[batch_size, C, height, width]的图像
             data['inputs']['imgs'] = batch_imgs
 
         data.setdefault('data_samples', None)
@@ -307,6 +320,7 @@ class Det3DDataPreprocessor(DetDataPreprocessor):
         # Process data with `pseudo_collate`.
         if is_seq_of(_batch_inputs, torch.Tensor):
             batch_pad_shape = []
+            #* 将每个图像的尺寸都向上转换成32的倍数
             for ori_input in _batch_inputs:
                 if ori_input.dim() == 4:
                     # mean multiview input, select one of the
