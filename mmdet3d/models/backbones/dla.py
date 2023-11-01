@@ -33,6 +33,7 @@ def dla_build_norm_layer(cfg: ConfigType,
             return build_norm_layer(cfg_, num_features)
         else:
             assert 'num_groups' in cfg_
+            #* 如果通道数不能整除32, 就将num_groups整除2
             cfg_['num_groups'] = cfg_['num_groups'] // 2
             return build_norm_layer(cfg_, num_features)
     else:
@@ -340,36 +341,155 @@ class DLANet(BaseModule):
                 ]
 
         block, levels, channels = self.arch_settings[depth]
+        #* SMOKE中, channels为(16, 32, 64, 128, 256, 512)
         self.channels = channels
+        #* SMOKE中, num_levels为(1, 1, 1, 2, 2, 1)
         self.num_levels = len(levels)
+        #* SMOKE中frozen_stages为-1
         self.frozen_stages = frozen_stages
+        #* SMOKE中out_indices为(0, 1, 2, 3, 4, 5)
         self.out_indices = out_indices
         assert max(out_indices) < self.num_levels
+        #* base_layer是[conv2d, norm, ReLU]的结合
         self.base_layer = nn.Sequential(
+            #* 对于SMOKE来说就是普通的conv2d
             build_conv_layer(
                 conv_cfg,
                 in_channels,
                 channels[0],
-                7,
+                7,   #* kernel_size
                 stride=1,
                 padding=3,
                 bias=False),
+            #* 对于SMOKE来说就是普通GN
             dla_build_norm_layer(norm_cfg, channels[0])[1],
             nn.ReLU(inplace=True))
 
         # DLANet first uses two conv layers then uses several
         # Tree layers
+        """
+        对于SMOKE
+        对于level0, 是[conv2d, GN, ReLU], channel:16->16, 步长为1
+        对于level1, 是[conv2d, GN, ReLU], channel:16->32, 步长为2
+        """
         for i in range(2):
             level_layer = self._make_conv_level(
                 channels[0],
                 channels[i],
-                levels[i],
+                levels[i],  #* levels[i]表示里面有多少个(conv, norm, relu)的块
                 norm_cfg,
                 conv_cfg,
                 stride=i + 1)
             layer_name = f'level{i}'
             self.add_module(layer_name, level_layer)
 
+        """
+        对于SMOKE
+        level2: 输入是x, 尺寸为[batch_size, 32, 192, 640]
+            先用2*2的步长为2的Maxpooling对x进行下采样
+            再用1*1的2D卷积, 和GN将x从32变为64, 该特征记为identity, 尺寸为[batch_size, 64, 96, 320]
+            
+            对x作用3*3的步长为2的卷积(32->64), GN, ReLU, 
+                3*3的步长为1的卷积(64->64), GN, 将得到的结果与identity相加送入ReLU中
+                记该特征为x1, 尺寸为[batch_size, 64, 96, 320]
+            
+            对x1作用3*3的步长为1的卷积(64->64), GN, ReLU,
+                3*3的步长为1的卷积(64->64), GN, 将得到的结果与x1相加送入ReLU中
+                记该特征为x2, 尺寸为[batch_size, 64, 96, 320]
+                
+            特征列表是[x2, x1]
+            将x2和x1在特征维度进行拼接, 尺寸为[batch_size, 128, 96, 320]
+            送入1*1的步长为1的卷积(128->64)中, GN, ReLU中
+            最终的输出尺寸为[batch_size, 64, 96, 320]
+        level3: 输入是level2的输出, 尺寸是[batch_size, 64, 96, 320], 记为x
+            用2*2的步长为2的Maxpooling对x进行下采样得到特征bottom, 尺寸为[batch_size, 64, 48, 160]
+            对bottom用1*1的步长为1的卷积(64->128), GN得到新的特征, 记为identity, 尺寸为[batch_size, 128, 48, 160]
+            
+            将x和identity送入Tree1中:
+                用2*2的步长为2的Maxpooling对x进行下采样, 得到特征bottom, 尺寸为[batch_size, 64, 48, 160]
+                对bottom用1*1的步长为1的卷积(64->128), GN得到新的特征, 记为identity, 尺寸为[batch_size, 128, 48, 160](直接替换了送进来的identity)
+                
+                对x作用3*3的步长为2的卷积(64->128), GN, ReLU, 
+                    3*3的步长为1的卷积(128->128), GN, 将得到的结果与identity相加送入ReLU中
+                    记该特征为x1, 尺寸为[batch_size, 128, 48, 160]
+                
+                对x1作用3*3的步长为1的卷积(128->128), GN, ReLU,
+                    3*3的步长为1的卷积(128->128), GN, 将得到的结果与x1相加送入ReLU中
+                    记该特征为x2, 尺寸为[batch_size, 128, 48, 160]
+
+                特征列表为[x2, x1]
+                将x2和x1在特征维度上进行拼接, 尺寸为[batch_size, 256, 48, 160]
+                送入1*1的步长为1的卷积(256, 128)中, GN, ReLU中
+                最终的输出尺寸为[batch_size, 128, 48, 160], 记为x1
+                                
+            将x1, [bottom, x1]作为参数送入Tree2中:
+                children为[bottom, x1]
+                identity就是输入的x1
+                对x1作用3*3的步长为1的卷积(128->128), GN, ReLU, 
+                    3*3的步长为1的卷积(128->128), GN, 将得到的结果与identity相加送入ReLU中
+                    记该特征为x11, 尺寸为[batch_size, 128, 48, 160]   
+                
+                对x11作用3*3的步长为1的卷积(128->128), GN, ReLU,
+                    3*3的步长为1的卷积(128->128), GN, 将得到的结果与x11相加送入ReLU中
+                    记该特征为x12, 尺寸为[batch_size, 128, 48, 160]
+                特征列表是[x12(128), x11(128), bottom(64), x1(128)]
+                将特征列表在特征维度上进行拼接, 尺寸为[batch_size, 448, 48, 160]
+                送入1*1的步长为1的卷积(448->128)中, GN, ReLU中
+                最终的输出尺寸为[batch_size, 128, 48, 160]
+            最终的输入为Tree2的输出, 输出尺寸为[batch_size, 128, 48, 160]
+        level4: 输入是level3的输出, 尺寸是[batch_size, 128, 48, 160]
+            用2*2的步长为2的Maxpooling对x进行下采样得到特征bottom, 尺寸为[batch_size, 128, 24, 80]
+            对bottom用1*1的步长为1的卷积(128->256), GN得到新的特征, 记为identity, 尺寸为[batch_size, 256, 24, 80]
+            
+            将x和identity送入Tree1中:
+                用2*2的步长为2的Maxpooling对x进行下采样, 得到特征bottom, 尺寸为[batch_size, 128, 24, 80]
+                对bottom用1*1的步长为1的卷积(128->256), GN得到新的特征, 记为identity, 尺寸为[batch_size, 256, 24, 80](直接替换了送进来的identity)
+                
+                对x作用3*3的步长为2的卷积(128->256), GN, ReLU, 
+                    3*3的步长为1的卷积(256->256), GN, 将得到的结果与identity相加送入ReLU中
+                    记该特征为x1, 尺寸为[batch_size, 256, 24, 80]
+                
+                对x1作用3*3的步长为的卷积(256->256), GN, ReLU,
+                    3*3的步长为1的卷积(256->256), GN, 将得到的结果与x1相加送入ReLU中
+                    记该特征为x2, 尺寸为[batch_size, 256, 24, 80]
+                
+                特征列表为[x2, x1]
+                将x2和x1在特征维度上进行拼接, 尺寸为[batch_size, 512, 48, 160]
+                送入1*1的步长为1的卷积(512, 256)中, GN, ReLU中
+                最终的输出尺寸为[batch_size, 256, 24, 80], 记为x1
+                
+            将x1, [bottom, x1]作为参数送入Tree2中:
+                children为[bottom, x1]
+                identity就是输入的x1
+                对x1作用3*3的步长为1的卷积(256->256), GN, ReLU, 
+                    3*3的步长为1的卷积(256->256), GN, 将得到的结果与identity相加送入ReLU中
+                    记该特征为x11, 尺寸为[batch_size, 256, 24, 80]   
+                
+                对x11作用3*3的步长为1的卷积(256->256), GN, ReLU,
+                    3*3的步长为1的卷积(256->256), GN, 将得到的结果与x11相加送入ReLU中
+                    记该特征为x12, 尺寸为[batch_size, 256, 24, 80]
+                特征列表是[x12, x11, bottom, x1]
+                将特征列表在特征维度上进行拼接, 尺寸为[batch_size, 896, 24, 80]
+                送入1*1的步长为1的卷积(896->256)中, GN, ReLU中
+                最终的输出尺寸为[batch_size, 256, 24, 80]
+            最终的输入为Tree2的输出, 输出尺寸为[batch_size, 256, 24, 80]
+        level5: 输入是level4的输出, 尺寸是[batch_size, 256, 24, 80]
+            用2*2的步长为2的Maxpooling对x进行下采样得到特征bottom, 尺寸为[batch_size, 256, 12, 40]
+            对bottom用1*1的步长为1的卷积(256->512), GN得到新的特征, 记为identity, 尺寸为[batch_size, 512, 12, 40]
+            
+            对x作用3*3的步长为2的卷积(256->512), GN, ReLU, 
+                3*3的步长为1的卷积(512->512), GN, 将得到的结果与identity相加送入ReLU中
+                记该特征为x1, 尺寸为[batch_size, 512, 12, 40]
+            
+            对x1作用3*3的步长为1的卷积(512->512), GN, ReLU,
+                3*3的步长为1的卷积(512->512), GN, 将得到的结果与x1相加送入ReLU中
+                记该特征为x2, 尺寸为[batch_size, 512, 12, 40]
+                
+            特征列表是[x2, x1, bottom]
+            将x2和x1在特征维度进行拼接, 尺寸为[batch_size, 1280, 12, 40]
+            送入1*1的步长为1的卷积(1280->512)中, GN, ReLU中
+            最终的输出尺寸为[batch_size, 512, 12, 40]
+        """
         for i in range(2, self.num_levels):
             dla_layer = Tree(
                 levels[i],
@@ -444,10 +564,20 @@ class DLANet(BaseModule):
                 param.requires_grad = False
 
     def forward(self, x: Tensor) -> Tuple[Tensor, ...]:
+        #* 输入是img的tensor数据, 尺寸为[batch_size, C, height, width]
         outs = []
         x = self.base_layer(x)
         for i in range(self.num_levels):
             x = getattr(self, 'level{}'.format(i))(x)
             if i in self.out_indices:
                 outs.append(x)
+        """
+        在SMOKE中,将每一层的输出就加入outs中, 尺寸如下
+        [batch_size, 16, 384, 1280]
+        [batch_size, 32, 192, 640]
+        [batch_size, 64, 96, 320]
+        [batch_size, 128, 48, 160]
+        [batch_size, 256, 24, 80]
+        [batch_size, 512, 12, 40]
+        """
         return tuple(outs)

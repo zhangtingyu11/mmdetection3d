@@ -88,6 +88,7 @@ class SingleStageMono3DDetector(SingleStageDetector):
             different resolutions.
         """
         batch_imgs = batch_inputs_dict['imgs']
+        #* 只将batch_inputs_dict['imgs']送入backbone里面, 
         x = self.backbone(batch_imgs)
         if self.with_neck:
             x = self.neck(x)
