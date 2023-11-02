@@ -98,6 +98,9 @@ class IDAUpsample(BaseModule):
             start_level (int): Start layer for feature upsampling.
             end_level (int): End layer for feature upsampling.
         """
+        """
+
+        """
         for i in range(start_level, end_level - 1):
             upsample = self.ups[i - start_level]
             project = self.projs[i - start_level]
@@ -159,6 +162,59 @@ class DLAUpsample(BaseModule):
         Returns:
             tuple[torch.Tensor]: Up-sampled features of different layers.
         """
+        """
+        SMOKE
+        首先将level5的输出加入到outs中, 尺寸为[batch_size, 512, 12, 40]
+        总共要进行三次ida, 分别记为ida0, ida1, ida2
+        ida0: 
+            输入是level5, 尺寸为[batch_size, 512, 12, 40]
+                 level4, 尺寸为[batch_size, 256, 24, 80]
+            DCNv2对卷积核的计算偏移进行学习, 除此之外还学习偏移的权重, 具体可以参考https://zhuanlan.zhihu.com/p/395200094
+            将level5送入DCNv2(512->256), GN, ReLU中, 得到尺寸为[batch_size, 256, 12, 40]的张量
+            将上面的张量送到转置卷积中, 得到尺寸为[batch_size, 256, 24, 80]的张量
+            将上面的张量和level4相加
+            送到DCNv2(256->256),  GN, ReLU中, 得到尺寸为[batch_size, 256, 24, 80]的张量, 作为新的level5
+            将新的level5数据前插到outs中
+        ida1:
+            输入是level3, 尺寸为[batch_size, 128, 48, 160]
+                 level4, 尺寸为[batch_size, 256, 24, 80]
+                 level5, 尺寸为[batch_size, 256, 24, 80]
+            先将level4送入DCNv2(256->128), GN, ReLU中, 得到尺寸为[batch_size, 128, 24, 80]的张量
+            将上面的张量送入转置卷积中, 得到尺寸为[batch_size, 128, 48, 160]的张量
+            将上面的张量和level3相加, 送入DCNv2(128->128), GN, ReLU中, 得到尺寸为[batch_size, 128, 48, 160]的张量
+            作为新的level4
+            
+            将level5送入DCNv2(256->128), GN, ReLU中, 得到尺寸为[batch_size, 128, 24, 80]的张量
+            将上面的张量送入转置卷积中, 得到尺寸为[batch_size, 128, 48, 160]的张量
+            将上面的张量和level4相加, 送入DCNv2(128->128), GN, ReLU中, 得到尺寸为[batch_size, 128, 48, 160]的张量
+            作为新的level5
+            将新的level5数据前插到outs中
+        ida2:
+            输入是level2, 尺寸为[batch_size, 64, 96, 320]
+                 level3, 尺寸为[batch_size, 128, 48, 160]
+                 level4, 尺寸为[batch_size, 128, 48, 160]
+                 level5, 尺寸为[batch_size, 128, 48, 160]
+            先将level3送入DCNv2(128->64), GN, ReLU中, 得到尺寸为[batch_size, 64, 48, 160]的张量
+            将上面的张量送入转置卷积中, 得到尺寸为[batch_size, 64, 96, 320]的张量
+            将上面的张量和level2相加, 送入DCNv2(64->64), GN, ReLU中, 得到尺寸为[batch_size, 64, 96, 320]的张量
+            作为新的level3
+            
+            先将level4送入DCNv2(128->64), GN, ReLU中, 得到尺寸为[batch_size, 64, 48, 160]的张量
+            将上面的张量送入转置卷积中, 得到尺寸为[batch_size, 64, 96, 320]的张量
+            将上面的张量和level3相加, 送入DCNv2(64->64), GN, ReLU中, 得到尺寸为[batch_size, 64, 96, 320]的张量
+            作为新的level4
+            
+            将level5送入DCNv2(128->64), GN, ReLU中, 得到尺寸为[batch_size, 64, 48, 160]的张量
+            将上面的张量送入转置卷积中, 得到尺寸为[batch_size, 64, 96, 320]的张量
+            将上面的张量和level4相加, 送入DCNv2(64->64), GN, ReLU中, 得到尺寸为[batch_size, 64, 96, 320]的张量
+            作为新的level5
+            将新的level5数据前插到outs中
+        outs中有四个元素
+            0: 尺寸为[batch_size, 64, 96, 320]
+            1: 尺寸为[batch_size, 128, 48, 160]
+            2: 尺寸为[batch_size, 256, 24, 80]
+            3: 尺寸为[batch_size, 512, 12, 40]
+        """
         outs = [mlvl_features[-1]]
         for i in range(len(mlvl_features) - self.start_level - 1):
             ida = getattr(self, 'ida_{}'.format(i))
@@ -208,11 +264,53 @@ class DLANeck(BaseModule):
             use_dcn)
 
     def forward(self, x):
+        """
+        SMOKE: 
+        输入是一个元组, 包含多个层级的特征, 总共有6个特征
+        0: [batch_size, 16, 384, 1280]
+        1: [batch_size, 32, 192, 640]
+        2: [batch_size, 64, 96, 320]
+        3: [batch_size, 128, 48, 160]
+        4: [batch_size, 256, 24, 80]
+        5: [batch_size, 512, 12, 40]
+        """
+        #* 将元组转化成列表
         mlvl_features = [x[i] for i in range(len(x))]
+        """
+        mlvl_features中有四个元素
+            0: 尺寸为[batch_size, 64, 96, 320]
+            1: 尺寸为[batch_size, 128, 48, 160]
+            2: 尺寸为[batch_size, 256, 24, 80]
+            3: 尺寸为[batch_size, 512, 12, 40]
+        """
         mlvl_features = self.dla_up(mlvl_features)
         outs = []
+        """
+        outs中有mlvl_features中的前三个元素
+            0: 尺寸为[batch_size, 64, 96, 320]
+            1: 尺寸为[batch_size, 128, 48, 160]
+            2: 尺寸为[batch_size, 256, 24, 80]
+        """
         for i in range(self.end_level - self.start_level):
             outs.append(mlvl_features[i].clone())
+            
+        """
+        SMOKE
+        输入为三个元素
+            f0: 尺寸为[batch_size, 64, 96, 320]
+            f1: 尺寸为[batch_size, 128, 48, 160]
+            f2: 尺寸为[batch_size, 256, 24, 80]
+        先将f1送入DCNv2(128->64), GN, ReLU中, 得到尺寸为[batch_size, 64, 48, 160]的张量
+        将上面的张量送入转置卷积中, 得到尺寸为[batch_size, 64, 96, 320]的张量
+        将上面的张量和f0相加, 送入DCNv2(64->64), GN, ReLU中, 得到尺寸为[batch_size, 64, 96, 320]的张量
+        作为新的f1
+        
+        将f2送入DCNv2(256->64), GN, ReLU中, 得到尺寸为[batch_size, 64, 24, 80]的张量
+        将上面的张量送入转置卷积中, 得到尺寸为[batch_size, 64, 96, 320]的张量
+        将上面的张量和f1相加, 送入DCNv2(64->64), GN, ReLU中, 得到尺寸为[batch_size, 64, 96, 320]的张量
+        作为新的f2
+        最后返回[f2], 尺寸为[batch_size, 64, 96, 320]
+        """
         self.ida_up(outs, 0, len(outs))
         return [outs[-1]]
 

@@ -92,6 +92,7 @@ class SingleStageMono3DDetector(SingleStageDetector):
         x = self.backbone(batch_imgs)
         if self.with_neck:
             x = self.neck(x)
+        #* 在SMOKE中输出为[batch_size, 64, 96, 320]的张量
         return x
 
     # TODO: Support test time augmentation
