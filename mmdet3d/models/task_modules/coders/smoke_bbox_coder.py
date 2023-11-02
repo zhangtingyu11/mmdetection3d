@@ -103,9 +103,11 @@ class SMOKECoder(BaseBBoxCoder):
                                                depths, cam2imgs, trans_mats)
         pred_dimensions = self._decode_dimension(labels, dimensions_offsets)
         if locations is None:
+             #* 根据预测的位置, 求预测的角度
             pred_orientations = self._decode_orientation(
                 orientations, pred_locations)
         else:
+            #* 根据真实的位置, 求预测的角度
             pred_orientations = self._decode_orientation(
                 orientations, locations)
 
@@ -113,6 +115,7 @@ class SMOKECoder(BaseBBoxCoder):
 
     def _decode_depth(self, depth_offsets: Tensor) -> Tensor:
         """Transform depth offset to depth."""
+        #* 对于smoke来说, 预测的深度是 16.32 * d + 28.01
         base_depth = depth_offsets.new_tensor(self.base_depth)
         depths = depth_offsets * base_depth[1] + base_depth[0]
 
@@ -143,9 +146,11 @@ class SMOKECoder(BaseBBoxCoder):
         N_batch = cam2imgs.shape[0]
         batch_id = torch.arange(N_batch).unsqueeze(1)
         obj_id = batch_id.repeat(1, N // N_batch).flatten()
+        #* 求变换的逆矩阵
         trans_mats_inv = trans_mats.inverse()[obj_id]
         cam2imgs_inv = cam2imgs.inverse()[obj_id]
         centers2d = points + centers2d_offsets
+        #* 转齐次坐标
         centers2d_extend = torch.cat((centers2d, centers2d.new_ones(N, 1)),
                                      dim=1)
         # expand project points as [N, 3, 1]
@@ -157,7 +162,7 @@ class SMOKECoder(BaseBBoxCoder):
             centers2d_img = torch.cat(
                 (centers2d_img, centers2d.new_ones(N, 1, 1)), dim=1)
         locations = torch.matmul(cam2imgs_inv, centers2d_img).squeeze(2)
-
+        #* 得到位置
         return locations[:, :3]
 
     def _decode_dimension(self, labels: Tensor, dims_offset: Tensor) -> Tensor:
@@ -172,6 +177,7 @@ class SMOKECoder(BaseBBoxCoder):
         labels = labels.flatten().long()
         base_dims = dims_offset.new_tensor(self.base_dims)
         dims_select = base_dims[labels, :]
+        #* 预测的尺寸
         dimensions = dims_offset.exp() * dims_select
 
         return dimensions

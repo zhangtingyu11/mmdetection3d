@@ -108,14 +108,23 @@ class SMOKEMono3DHead(AnchorFreeMono3DHead):
         Returns:
             tuple: Scores for each class, bbox of input feature maps.
         """
+        """
+        SMOKE只用到了cls_score和bbox_pred
+        其中cls_score的尺寸为[batch_size, 类别数, 96, 320]
+        bbox_pred的尺寸为[batch_size, 8, 96, 320]
+        """
         cls_score, bbox_pred, dir_cls_pred, attr_pred, cls_feat, reg_feat = \
             super().forward_single(x)
+        #* 将置信度转到0~1
         cls_score = cls_score.sigmoid()  # turn to 0-1
+        #* 将区间缩小一点
         cls_score = cls_score.clamp(min=1e-4, max=1 - 1e-4)
         # (N, C, H, W)
+        #* offset_dims求的是距离平均尺寸的差, 将其转到0-1, 然后减去0.5, 变成-0.5~0.5
         offset_dims = bbox_pred[:, self.dim_channel, ...]
         bbox_pred[:, self.dim_channel, ...] = offset_dims.sigmoid() - 0.5
         # (N, C, H, W)
+        #* 方向向量, 相当于F.normalize是[x, y], 然后求出来的方向是[x/(x^2+y^2), y/(x^2+y^2)], 也就是[cos, sin]
         vector_ori = bbox_pred[:, self.ori_channel, ...]
         bbox_pred[:, self.ori_channel, ...] = F.normalize(vector_ori)
         return cls_score, bbox_pred
@@ -287,25 +296,32 @@ class SMOKEMono3DHead(AnchorFreeMono3DHead):
         """
         batch, channel = pred_reg.shape[0], pred_reg.shape[1]
         w = pred_reg.shape[3]
+        #* 相机转图像是(batch_size, 4, 4)
         cam2imgs = torch.stack([
             gt_locations.new_tensor(img_meta['cam2img'])
             for img_meta in batch_img_metas
         ])
+        #* 做了偏移和缩放后的仿射变换的矩阵
         trans_mats = torch.stack([
             gt_locations.new_tensor(img_meta['trans_mat'])
             for img_meta in batch_img_metas
         ])
+        #* 将2D坐标转化为一维坐标 (i,j)->j*w+i, 这个主要是和坐标系有关, j*w+i
         centers_2d_inds = centers_2d[:, 1] * w + centers_2d[:, 0]
         centers_2d_inds = centers_2d_inds.view(batch, -1)
+        #* 根据中心的位置求预测的值, 尺寸为[batch_size, 最大的样本数, 8]
         pred_regression = transpose_and_gather_feat(pred_reg, centers_2d_inds)
+        #* 尺寸为[batch_size, 最大的样本数, 8]->[batch_size*最大的样本数, 8]
         pred_regression_pois = pred_regression.view(-1, channel)
+        #* 根据预测的结果, 生成预测框的位置, 尺寸, 方向
         locations, dimensions, orientations = self.bbox_coder.decode(
             pred_regression_pois, centers_2d, labels_3d, cam2imgs, trans_mats,
             gt_locations)
-
+        #* 只对存在的包围框求loss
         locations, dimensions, orientations = locations[indices], dimensions[
             indices], orientations[indices]
 
+        #* 从底部中心点转到中心点
         locations[:, 1] += dimensions[:, 1] / 2
 
         gt_locations = gt_locations[indices]
@@ -313,10 +329,13 @@ class SMOKEMono3DHead(AnchorFreeMono3DHead):
         assert len(locations) == len(gt_locations)
         assert len(dimensions) == len(gt_dimensions)
         assert len(orientations) == len(gt_orientations)
+        #* 根据真实的位置, 真实的尺寸, 预测的方向来生成包围框
         bbox3d_yaws = self.bbox_coder.encode(gt_locations, gt_dimensions,
                                              orientations, batch_img_metas)
+        #* 根据真实的位置, 预测的尺寸, 真实的方向来生成包围框
         bbox3d_dims = self.bbox_coder.encode(gt_locations, dimensions,
                                              gt_orientations, batch_img_metas)
+        #* 根据预测的位置, 真实的尺寸, 真实的方向来生成包围框
         bbox3d_locs = self.bbox_coder.encode(locations, gt_dimensions,
                                              gt_orientations, batch_img_metas)
 
@@ -362,40 +381,64 @@ class SMOKEMono3DHead(AnchorFreeMono3DHead):
                     shape (N, 8, 3)
         """
 
+        """
+        gt_bboxes是一个长度为batch_size的列表
+        里面的每个元素是一个tensor, 尺寸为[gt个数, 4]
+        """
         gt_bboxes = [
             gt_instances.bboxes for gt_instances in batch_gt_instances
         ]
+        """
+        gt_labels是一个长度为batch_size的列表
+        里面的每个元素是一个tensor, 尺寸为[gt个数, ]
+        """
         gt_labels = [
             gt_instances.labels for gt_instances in batch_gt_instances
         ]
+        """
+        gt_bboxes_3d是一个长度为batch_size的列表
+        里面的每个元素是一个CameraInstances3DBoxes
+        """
         gt_bboxes_3d = [
             gt_instances_3d.bboxes_3d
             for gt_instances_3d in batch_gt_instances_3d
         ]
+        """
+        gt_labels_3d是一个长度为batch_size的列表
+        里面的每个元素是一个tensor, 尺寸为[gt个数,]
+        """
         gt_labels_3d = [
             gt_instances_3d.labels_3d
             for gt_instances_3d in batch_gt_instances_3d
         ]
+        """
+        centers_2d是一个长度为batch_size的列表
+        里面的每个元素是一个tensor, 尺寸为[gt个数, 2]
+        """
         centers_2d = [
             gt_instances_3d.centers_2d
             for gt_instances_3d in batch_gt_instances_3d
         ]
         img_shape = batch_img_metas[0]['pad_shape']
 
+        #* 记录样本是否进行了随机的平移缩放, 如果没有就是True, 如果有就是False, 尺寸是[batch_size, ]
         reg_mask = torch.stack([
             gt_bboxes[0].new_tensor(
                 not img_meta['affine_aug'], dtype=torch.bool)
             for img_meta in batch_img_metas
         ])
 
+        #* 图像的高宽, 特征图的高宽
         img_h, img_w = img_shape[:2]
         bs, _, feat_h, feat_w = feat_shape
 
+        #* 下采样的倍率(SMOKE中是1/4)
         width_ratio = float(feat_w / img_w)  # 1/4
         height_ratio = float(feat_h / img_h)  # 1/4
 
         assert width_ratio == height_ratio
-
+        
+        #* SMOKE在每个特征图的位置都构建一个目标, 尺寸为[batch_size, 类别数, 96, 320]
         center_heatmap_target = gt_bboxes[-1].new_zeros(
             [bs, self.num_classes, feat_h, feat_w])
 
@@ -411,20 +454,26 @@ class SMOKEMono3DHead(AnchorFreeMono3DHead):
                 center_x_int, center_y_int = center.int()
                 scale_box_h = (gt_bbox[j][3] - gt_bbox[j][1]) * height_ratio
                 scale_box_w = (gt_bbox[j][2] - gt_bbox[j][0]) * width_ratio
+                #* 给定包围框的长宽, 预测的包围框的角点在原来角点的多少半径的范围内, 可以使得预测的包围框与原来包围框IoU都>=0.7(参考CornerNet)
+                #* https://zhuanlan.zhihu.com/p/96856635
                 radius = gaussian_radius([scale_box_h, scale_box_w],
                                          min_overlap=0.7)
                 radius = max(0, int(radius))
                 ind = gt_label[j]
+                #* 根据高斯核生成目标数据
                 gen_gaussian_target(center_heatmap_target[batch_id, ind],
                                     [center_x_int, center_y_int], radius)
-
+        #* 热力图中等于1的个数(相当于gt的数量)
         avg_factor = max(1, center_heatmap_target.eq(1).sum())
         num_ctrs = [center_2d.shape[0] for center_2d in centers_2d]
+        #* 样本中最多的物体数
         max_objs = max(num_ctrs)
 
+        #* 将reg_inds拓展成 sum(num_ctrs)大小
         reg_inds = torch.cat(
             [reg_mask[i].repeat(num_ctrs[i]) for i in range(bs)])
 
+        #* [batch_size, 样本中的最大数]
         inds = torch.zeros((bs, max_objs),
                            dtype=torch.bool).to(centers_2d[0].device)
 
@@ -433,11 +482,13 @@ class SMOKEMono3DHead(AnchorFreeMono3DHead):
             gt_bbox_3d.to(centers_2d[0].device) for gt_bbox_3d in gt_bboxes_3d
         ]
 
+        #* 都设置成最大的样本数
         batch_centers_2d = centers_2d[0].new_zeros((bs, max_objs, 2))
         batch_labels_3d = gt_labels_3d[0].new_zeros((bs, max_objs))
         batch_gt_locations = \
             gt_bboxes_3d[0].tensor.new_zeros((bs, max_objs, 3))
         for i in range(bs):
+            #* 赋值
             inds[i, :num_ctrs[i]] = 1
             batch_centers_2d[i, :num_ctrs[i]] = centers_2d[i]
             batch_labels_3d[i, :num_ctrs[i]] = gt_labels_3d[i]
@@ -454,24 +505,27 @@ class SMOKEMono3DHead(AnchorFreeMono3DHead):
             if gt_bbox_3d.tensor.shape[0] > 0
         ]
 
+        #* 尺寸为[gt个数, 3]
         gt_dimensions = torch.cat(
             [gt_bbox_3d.tensor[:, 3:6] for gt_bbox_3d in gt_bboxes_3d])
+        #* 尺寸为[gt个数, 1]
         gt_orientations = torch.cat([
             gt_bbox_3d.tensor[:, 6].unsqueeze(-1)
             for gt_bbox_3d in gt_bboxes_3d
         ])
+        #* 尺寸为[gt个数, 8, 3]
         gt_corners = torch.cat(
             [gt_bbox_3d.corners for gt_bbox_3d in gt_bboxes_3d])
 
         target_labels = dict(
-            gt_centers_2d=batch_centers_2d.long(),
-            gt_labels_3d=batch_labels_3d,
-            indices=inds,
-            reg_indices=reg_inds,
-            gt_locs=batch_gt_locations,
-            gt_dims=gt_dimensions,
-            gt_yaws=gt_orientations,
-            gt_cors=gt_corners)
+            gt_centers_2d=batch_centers_2d.long(),  #* [batch_size*最大的样本数, 2]
+            gt_labels_3d=batch_labels_3d,           #* [batch_size, 最大的样本数]
+            indices=inds,                           #* [batch_size*最大的样本数]
+            reg_indices=reg_inds,                   #* [gt个数]
+            gt_locs=batch_gt_locations,             #* [batch_size*最大的样本数, 3]
+            gt_dims=gt_dimensions,                  #* [gt个数, 3]
+            gt_yaws=gt_orientations,                #* [gt个数, 1]
+            gt_cors=gt_corners)                     #* [gt个数, 8, 3]
 
         return center_heatmap_target, avg_factor, target_labels
 
@@ -511,9 +565,24 @@ class SMOKEMono3DHead(AnchorFreeMono3DHead):
             - loss_bbox (Tensor): loss of bbox heatmap.
         """
         assert len(cls_scores) == len(bbox_preds) == 1
+        #* SMOKE中center_2d_heatmap的尺寸是[batch_size, 3, 96, 320]
         center_2d_heatmap = cls_scores[0]
+        #* SMOKE中pred_reg的尺寸是[batch_size, 8, 96, 320]
         pred_reg = bbox_preds[0]
 
+        """
+        center_2d_heatmap_target: 通过高斯核生成的目标, 尺寸为[batch_size, 类别数, 96, 320]
+        avg_factor: gt包围框的总数
+        target_labels: 一个字典
+            gt_centers_2d(gt包围框的中心点2D坐标)      #* [batch_size*最大的样本数, 2]
+            gt_labels_3d(gt包围框的类别)              #* [batch_size, 最大的样本数]
+            indices(要计算类别的包围框的索引)           #* [batch_size*最大的样本数]
+            reg_indices(要计算回归值的包围框)          #* [gt个数]
+            gt_locs(gt包围框的位置)                   #* [batch_size*最大的样本数, 3]
+            gt_dims(gt包围框的尺寸)                   #* [gt个数, 3]
+            gt_yaws(gt包围框的航向角)                 #* [gt个数, 1]
+            gt_cors(gt包围框的角点坐标)               #* [gt个数, 8, 3]
+        """
         center_2d_heatmap_target, avg_factor, target_labels = \
             self.get_targets(batch_gt_instances_3d,
                              batch_gt_instances,
@@ -530,11 +599,19 @@ class SMOKEMono3DHead(AnchorFreeMono3DHead):
             batch_img_metas=batch_img_metas,
             pred_reg=pred_reg)
 
+        #* SMOKE中用focal loss来计算高斯核
         loss_cls = self.loss_cls(
             center_2d_heatmap, center_2d_heatmap_target, avg_factor=avg_factor)
 
         reg_inds = target_labels['reg_indices']
 
+        #* 对于做了affine resize的样本都不计算loss
+        """
+        用L1 loss计算三种不同的包围框的角点loss
+            用真实的位置, 真实的尺寸, 预测的角度生成的包围框
+            用真实的位置, 预测的尺寸, 真实的角度生成的包围框
+            用预测的位置, 真实的尺寸, 真实的角度生成的包围框
+        """
         loss_bbox_oris = self.loss_bbox(
             pred_bboxes['ori'].corners[reg_inds, ...],
             target_labels['gt_cors'][reg_inds, ...])

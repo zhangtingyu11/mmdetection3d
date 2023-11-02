@@ -366,20 +366,38 @@ class AnchorFreeMono3DHead(BaseMono3DDenseHead):
                 and attributes, features after classification and regression
                 conv layers, some models needs these features like FCOS.
         """
+        """
+        SMOKE的检测头的输入的尺寸为[batch_size, 64, 96, 320]
+        """
         cls_feat = x
         reg_feat = x
 
+        """
+        SMOKE中self.cls_convs为空
+        """
         for cls_layer in self.cls_convs:
             cls_feat = cls_layer(cls_feat)
         # clone the cls_feat for reusing the feature map afterwards
         clone_cls_feat = cls_feat.clone()
+        """
+        SMOKE中self.conv_cls_prev为3*3的步长为1的卷积(64->256), GN, ReLU 
+        """
         for conv_cls_prev_layer in self.conv_cls_prev:
             clone_cls_feat = conv_cls_prev_layer(clone_cls_feat)
+        """
+        SMOKE中self.conv_cls为1*1的步长为1的卷积(256->3)
+        """
         cls_score = self.conv_cls(clone_cls_feat)
 
+        """
+        SMOKE中self.reg_convs为空
+        """
         for reg_layer in self.reg_convs:
             reg_feat = reg_layer(reg_feat)
         bbox_pred = []
+        """
+        对于SMOKE来说, 回归层为3*3的步长为1的卷积(64->256), GN, ReLU, 1*1的步长为1的卷积(256->8)
+        """
         for i in range(len(self.group_reg_dims)):
             # clone the reg_feat for reusing the feature map afterwards
             clone_reg_feat = reg_feat.clone()

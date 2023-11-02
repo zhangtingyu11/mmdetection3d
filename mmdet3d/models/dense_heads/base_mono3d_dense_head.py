@@ -79,7 +79,11 @@ class BaseMono3DDenseHead(BaseModule, metaclass=ABCMeta):
                   C >= 7. C = 7 for kitti and C = 9 for nuscenes with extra 2
                   dims of velocity.
         """
-
+        """
+        SMOKE中outs为一个长度为2的元组
+            outs[0]是一个长度为1的列表, 存放预测的得分, 尺寸为[batch_size, 3, 96, 320]
+            outs[1]是一个长度为1的列表, 存放预测的位置尺寸方向信息, 尺寸为[batch_size, 8, 96, 320]
+        """
         outs = self(x)
         batch_gt_instances_3d = []
         batch_gt_instances = []
