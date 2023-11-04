@@ -148,6 +148,7 @@ class Det3DDataset(BaseDataset):
             print_log('-' * 30, 'current')
             print_log(f'The length of the dataset: {len(self)}', 'current')
             content_show = [['category', 'number']]
+            #* self.num_ins_per_cat是一个字典, 记录的是每个类别物体的个数
             for cat_name, num in self.num_ins_per_cat.items():
                 content_show.append([cat_name, num])
             table = AsciiTable(content_show)

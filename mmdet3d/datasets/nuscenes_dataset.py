@@ -90,8 +90,8 @@ class NuScenesDataset(Det3DDataset):
                  with_velocity: bool = True,
                  use_valid_flag: bool = False,
                  **kwargs) -> None:
-        self.use_valid_flag = use_valid_flag
-        self.with_velocity = with_velocity
+        self.use_valid_flag = use_valid_flag        #* 是否过滤gt包围框或者gt_names
+        self.with_velocity = with_velocity          #* 是否计算速度
 
         # TODO: Redesign multi-view data process in the future
         assert load_type in ('frame_based', 'mv_image_based',
@@ -143,16 +143,41 @@ class NuScenesDataset(Det3DDataset):
                   3D ground truth bboxes.
                 - gt_labels_3d (np.ndarray): Labels of ground truths.
         """
+        """
+        将标注数据转化成字典
+            'gt_bboxes_labels': 2D gt包围框的标签, 长度为[gt数量,]的np.array
+            'gt_labels_3d': 3D gt包围框的标签, 长度为[gt数量,]的np.array
+            'gt_bboxes': 2D gt包围框的信息, 长度为[gt数量, 4]的np.array
+            'bbox_3d_isvalid': 3Dgt框是否有效, 长度为[gt数量, ]的np.array
+            'gt_bboxes_3d': 3D包围框的信息, 长度为[gt数量, 7]的np.array
+            'velocities': gt的速度信息, 长度为[gt数量, 2]的np.array
+            'centers_2d': gt的2D中心点信息(3D中心点投影到图像上), 长度为[gt数量, 2]的np.array
+            'depths': gt的深度信息, 长度为[gt数量,]的np.array
+            'attr_labels': 在nuscenes中包含以下几个, 编号按顺序排
+                  'cycle.with_rider', 'cycle.without_rider',
+                  'pedestrian.moving', 'pedestrian.standing',
+                  'pedestrian.sitting_lying_down', 'vehicle.moving',
+                  'vehicle.parked', 'vehicle.stopped', 'None'
+            'instances': 一个列表, 存储了每个gt的数据, 这个存的是未过滤的数据, 上面的数据会过滤
+        """
         ann_info = super().parse_ann_info(info)
         if ann_info is not None:
-
+            """
+            if self.use_valid_flag:
+                根据'bbox_3d_isvalid'进行过滤
+            else:
+                过滤lidar点数==0的gt
+            这些会更改除了'instances'的其他key
+            """
             ann_info = self._filter_with_mask(ann_info)
-
+        
             if self.with_velocity:
                 gt_bboxes_3d = ann_info['gt_bboxes_3d']
                 gt_velocities = ann_info['velocities']
+                #* 将nan的速度变成0
                 nan_mask = np.isnan(gt_velocities[:, 0])
                 gt_velocities[nan_mask] = [0.0, 0.0]
+                #* 将[x,y,z,l,h,w,yaw]和速度拼接
                 gt_bboxes_3d = np.concatenate([gt_bboxes_3d, gt_velocities],
                                               axis=-1)
                 ann_info['gt_bboxes_3d'] = gt_bboxes_3d
@@ -176,6 +201,7 @@ class NuScenesDataset(Det3DDataset):
         # the same as KITTI (0.5, 0.5, 0)
         # TODO: Unify the coordinates
         if self.load_type in ['fov_image_based', 'mv_image_based']:
+            #* 中心点坐标在中心, 而不是底部中心, box_dim是9
             gt_bboxes_3d = CameraInstance3DBoxes(
                 ann_info['gt_bboxes_3d'],
                 box_dim=ann_info['gt_bboxes_3d'].shape[-1],
@@ -212,15 +238,55 @@ class NuScenesDataset(Det3DDataset):
                         info['lidar_points']['lidar_path'])
 
             if self.modality['use_camera']:
+                """
+                cam_id就是相机的类别, 'CAM_FRONT', 'CAM_FRONT_RIGHT', 'CAM_FRONT_LEFT', 'CAM_BACK', 'CAM_BACK_LEFT', 'CAM_BACK_RIGHT'
+                img_info是一个字典
+                    'img_path': 图像的路径
+                    'cam2img': 相机到图像平面的转换矩阵, 3*3
+                    'cam2ego': 相机到自车的转换矩阵, 4*4
+                    'sample_data_token': 这一帧数据的token
+                    'timestamp': 时间戳
+                    'lidar2cam': lidar到相机的转换矩阵, 4*4
+                """
                 for cam_id, img_info in info['images'].items():
                     if 'img_path' in img_info:
                         if cam_id in self.data_prefix:
+                            #* 获取这个相机存储的绝对路径的前缀
                             cam_prefix = self.data_prefix[cam_id]
                         else:
                             cam_prefix = self.data_prefix.get('img', '')
+                        #* 将路径从相对路径改成绝对路径
                         img_info['img_path'] = osp.join(
                             cam_prefix, img_info['img_path'])
 
+            """
+            info原本是字典的形式
+                'sample_idx': 这一帧的编号
+                'token': 这一帧的投肯
+                'timestamp': 这一帧的时间戳
+                'ego2global': 自车转到全局坐标系的转换矩阵, 4*4
+                'images': 这也是个字典, key为'CAM_FRONT', 'CAM_FRONT_RIGHT', 'CAM_FRONT_LEFT', 'CAM_BACK', 'CAM_BACK_LEFT', 'CAM_BACK_RIGHT'
+                          值为一个字典
+                            'img_path': 图像的路径
+                            'cam2img': 相机到图像平面的转换矩阵, 3*3
+                            'cam2ego': 相机到自车的转换矩阵, 4*4
+                            'sample_data_token': 这一帧数据的token
+                            'timestamp': 时间戳
+                            'lidar2cam': lidar到相机的转换矩阵, 4*4 
+                'lidar_points': 一个字典
+                    'num_pts_feats': 点的特征的维度数
+                    'lidar_path': lidar文件的路径
+                    'lidar2ego': lidar转到自车坐标系的转化矩阵, 4*4
+                'instances': 一个列表, 里面存储这一帧的标签数据
+                    列表中的每一个元素都是一个字典
+                        'bbox_label': 类别的编号
+                        'bbox_3d': 3D包围框的信息
+                        'bbox_3d_isvalid': 这个包围框是否有效
+                        'bbox_label_3d': 包围框的3D标签序号
+                        'num_lidar_pts': 这个物体lidar的点的数量
+                        'num_radar_pts': 这个物体的radar的点的数量
+                        'velocity': 物体的速度, 长度为2的列表
+            """
             for idx, (cam_id, img_info) in enumerate(info['images'].items()):
                 camera_info = dict()
                 camera_info['images'] = dict()
