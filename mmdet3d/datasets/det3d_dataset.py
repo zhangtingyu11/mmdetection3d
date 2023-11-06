@@ -386,7 +386,19 @@ class Det3DDataset(BaseDataset):
             #* 如果这一帧里面没有GT包围框, 就返回None
             if len(input_dict['ann_info']['gt_labels_3d']) == 0:
                 return None
-
+        """
+        Dataloader中有的会有ReSize操作
+        Resize操作是调用了mmdet的Resize
+            如果keep_ratio: 那么要计算h, w分别变成要变成的长宽的比例, 选择较小的进行变化
+        results里面会多几个key:
+            'scale': 要resize成的图像
+            'scale_factor': (宽度的缩放比例, 高度的缩放比例)
+            'keep_ratio': 是否保持长宽的比例
+            'homography_matrix': 进行缩放后的转换矩阵
+        results里面改动的key:
+            'gt_bboxes': 包围框的标签也进行缩放
+            'img': 缩放了的图像
+        """
         example = self.pipeline(input_dict)
 
         if not self.test_mode and self.filter_empty_gt:

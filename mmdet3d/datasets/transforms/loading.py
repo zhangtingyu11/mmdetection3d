@@ -268,12 +268,18 @@ class LoadImageFromFileMono3D(LoadImageFromFile):
         if self.to_float32:
             img = img.astype(np.float32)
         
-        #* 图像, 对KITTI来说是[height, width, 3]
+        #* 图像, 对KITTI和nuscenes来说是[height, width, 3], nuscenes有6个相机, 每个相机和落在上面的物体都是一次检测任务
         results['img'] = img
         #* 图像尺寸是一样的, 对KITTI来说是[height, width]
         results['img_shape'] = img.shape[:2]
         results['ori_shape'] = img.shape[:2]
-
+        """
+        对nuscenes来说, 新增了几个Key
+            'cam2img': 相机到图像的转换矩阵, 3*3
+            'img':  图像, [height, width, 3]
+            'img_shape': 元组(height, width)
+            'ori_shape': 元组(height, width)
+        """
         return results
 
 
@@ -1067,15 +1073,15 @@ class LoadAnnotations3D(LoadAnnotations):
         """
         results = super().transform(results)
         if self.with_bbox_3d:
-            #* 对于KITTI而言, 会新增一个'gt_bboxes_3d', 存储CameraInstance3DBoxes实例
+            #* 对于KITTI和nuScenes而言, 会新增一个'gt_bboxes_3d', 存储CameraInstance3DBoxes实例
             results = self._load_bboxes_3d(results)
         if self.with_bbox_depth:
-            #TODO 需要确认一下KITTI信息的生成方式
+            #TODO 需要确认一下KITTI和nuScenes信息的生成方式
             """
             投影的知识:
                 3D齐次点[x, y, z, 1]投影到图像上会生成[x1, y1, z1], 其中深度为z1
                 而在图像上的2D坐标就为[x1/z1, y1/z1]
-            对于KITTI而言, 会新增一个'depths', 用来存储每个物体的深度, 深度通过上面计算得到, 尺寸为[包围框个数, ]的np.array
+            对于KITTI和nuScenes而言, 会新增一个'depths', 用来存储每个物体的深度, 深度通过上面计算得到, 尺寸为[包围框个数, ]的np.array
                           还会新增一个'centers_2d', 用来存储每个物体的3D中心点在图像上的投影, 尺寸为[包围框个数, 2]的np.array
             """
             results = self._load_bboxes_depth(results)
@@ -1083,6 +1089,14 @@ class LoadAnnotations3D(LoadAnnotations):
             #* 存储3D包围框的label, 尺寸为[包围框个数, ]的np.array
             results = self._load_labels_3d(results)
         if self.with_attr_label:
+            """
+            对nuScenes来说需要加载attr_labels
+            在nuscenes中包含以下几个, 编号按顺序排
+                  'cycle.with_rider', 'cycle.without_rider',
+                  'pedestrian.moving', 'pedestrian.standing',
+                  'pedestrian.sitting_lying_down', 'vehicle.moving',
+                  'vehicle.parked', 'vehicle.stopped', 'None'
+            """
             results = self._load_attr_labels(results)
         if self.with_panoptic_3d:
             results = self._load_panoptic_3d(results)
