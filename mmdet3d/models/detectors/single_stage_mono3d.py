@@ -88,7 +88,93 @@ class SingleStageMono3DDetector(SingleStageDetector):
             different resolutions.
         """
         batch_imgs = batch_inputs_dict['imgs']
-        #* 只将batch_inputs_dict['imgs']送入backbone里面, 
+        #* 只将batch_inputs_dict['imgs']送入backbone里面
+        """
+        FCOS3D Backbone:
+            batch_imgs大小为[batch_size, 3, 928, 1600]
+            backbone用的是ResNet101
+            首先经过一个7*7, 步长为2的卷积(3->64), BatchNorm2d, ReLU
+            使用3*3的步长为2的Maxpooling进行下采样, 输出的张量尺寸为[batch_size, 64, 232, 400]
+
+            reslayer0:
+                BottleNeck0:
+                    输入是x
+                    x经过一个1*1的步长为1的卷积(64->64), 一个BatchNorm2d, ReLU, 得到out
+                    out经过一个3*3的步长为1的卷积(64->64), 一个BatchNorm2d, ReLU, 更新out
+                    out经过一个1*1的步长为1的卷积(64->256), 一个BatchNorm2d, 更新out
+                    
+                    x经过一个1*1步长为1的卷积(64->256), 一个Batchnorm2d, 得到indentity
+                    将identity和out相加, 送入ReLU中, 得到最终的out
+                BottleNeck1:
+                    输入是上一层的输出, 记为x
+                    x经过一个1*1的步长为1的卷积(256->64), 一个Batchnorm2d, 一个ReLU, 得到out
+                    out经过一个3*3的步长为1的卷积(64->64), 一个Batchnorm2d, ReLU, 更新out
+                    out经过一个3*3的步长为1的卷积(64->256), 一个Batchnorm2d, 更新out
+                    将out+x送入ReLU中, 得到最终的out
+                BottleNeck2:
+                    同BottleNeck1
+                最后的输出是BottleNeck2的输出, 尺寸为[batch_size, 256, 232, 400]
+            reslayer1:
+                BottleNeck0:
+                    输入是x, 尺寸为[batch_size, 256, 232, 400]
+                    x经过一个1*1的步长为2的卷积(256->128), 一个BatchNorm2d, ReLU, 得到out, 尺寸为[batch_size, 512, 116, 200]
+                    out经过一个3*3的步长为1的卷积(128->128), 一个BatchNorm2d, ReLU, 更新out
+                    out经过一个1*1的步长为1的卷积(128->512), 一个BatchNorm2d, 更新out
+                    
+                    x经过一个1*1步长为2的卷积(256->512), 一个Batchnorm2d, 得到indentity, 尺寸为[batch_size, 512, 116, 200]
+                    将identity和out相加, 送入ReLU中, 得到最终的out, 尺寸为[batch_size, 512, 116, 200]
+                BottleNeck1:
+                    输入是上一层的输出, 尺寸为[batch_size, 512, 116, 200], 记为x
+                    x经过一个1*1的步长为1的卷积(512->128), 一个Batchnorm2d, 一个ReLU, 得到out
+                    out经过一个3*3的步长为1的卷积(128->128), 一个Batchnorm2d, 一个ReLU, 更新out
+                    out经过一个1*1的步长为1的卷积(128->512), 一个Batchnorm2d, 一个ReLU, 更新out
+                    将out+x送入ReLU中, 得到最终的out
+                BottleNeck2:
+                    同BottleNeck1
+                BottleNeck3:
+                    同BottleNeck1
+                最后的输出是BottleNeck3的输出, 尺寸为[batch_size, 512, 116, 200]
+            reslayer2:
+                BottleNeck0:
+                    输入是x, 尺寸为[batch_size, 1024, 116, 200]
+                    x经过一个1*1的步长为2的卷积(512->256), 一个BatchNorm2d, ReLU, 得到out, 尺寸为[batch_size, 256, 58, 100]
+                    out经过一个3*3的步长为1的DCNv2(256->256), 一个BatchNorm2d, ReLU, 更新out
+                    out经过一个1*1的步长为1的卷积(256->1024), 一个BatchNorm2d, 更新out
+                    
+                    x经过一个1*1步长为2的卷积(512->1024), 一个Batchnorm2d, 得到indentity, 尺寸为[batch_size, 1024, 58, 100]
+                    将identity和out相加, 送入ReLU中, 得到最终的out, 尺寸为[batch_size, 1024, 58, 100]
+                BottleNeck1:
+                    输入是上一层的输出, 尺寸为[batch_size, 1024, 58, 100]
+                    x经过一个1*1的步长为1的卷积(1024->256), 一个BatchNorm2d, ReLU, 得到out
+                    out经过一个3*3的步长为1的DCNv2(256->256), 一个BatchNorm2d, ReLU, 更新out
+                    out经过一个1*1的步长为1的卷积(256->1024), 一个BatchNorm2d, 更新out
+                    将out+x送入ReLU中, 得到最终的out
+                BottleNeck2~BottleNeck22:
+                    同BottleNeck1
+            resplayer3:
+                BottleNeck0:
+                    输入是x, 尺寸为[batch_size, 1024, 58, 100]
+                    x经过一个1*1的步长为2的卷积(1024->512), 一个BatchNorm2d, ReLU, 得到out, 尺寸为[batch_size, 512, 29, 50]
+                    out经过一个3*3的步长为1的DCNv2(512->512), 一个BatchNorm2d, ReLU, 更新out
+                    out经过一个1*1的步长为1的卷积(512->2048), 一个BatchNorm2d, 更新out
+                    
+                    x经过一个1*1步长为2的卷积(1024->2048), 一个Batchnorm2d, 得到indentity, 尺寸为[batch_size, 2048, 29, 50]
+                    将identity和out相加, 送入ReLU中, 得到最终的out, 尺寸为[batch_size, 2048, 29, 50]
+                BottleNeck1:
+                    输入是上一层的输出, 尺寸为[batch_size, 2048, 29, 50], 记为x
+                    x经过一个1*1的步长为1的卷积(2048->512), 一个Batchnorm2d, 一个ReLU, 得到out
+                    out经过一个3*3的步长为1的卷积(512->512), 一个Batchnorm2d, 一个ReLU, 更新out
+                    out经过一个1*1的步长为1的卷积(512->2048), 一个Batchnorm2d, 一个ReLU, 更新out
+                    将out+x送入ReLU中, 得到最终的out
+                BottleNeck2:
+                    同BottleNeck1
+            
+            最后的输出是一个程度为4的元素, 分别存放reslayer0~reslayer3的输出
+            尺寸分别为[batch_size, 256, 232, 400]
+                    [batch_size, 512, 116, 200]
+                    [batch_size, 1024, 58, 100]
+                    [batch_size, 2048, 29, 50]
+        """
         x = self.backbone(batch_imgs)
         if self.with_neck:
             x = self.neck(x)
@@ -99,3 +185,4 @@ class SingleStageMono3DDetector(SingleStageDetector):
     def aug_test(self, imgs, img_metas, rescale=False):
         """Test function with test time augmentation."""
         pass
+
