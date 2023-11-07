@@ -84,6 +84,39 @@ class BaseMono3DDenseHead(BaseModule, metaclass=ABCMeta):
             outs[0]是一个长度为1的列表, 存放预测的得分, 尺寸为[batch_size, 3, 96, 320]
             outs[1]是一个长度为1的列表, 存放预测的位置尺寸方向信息, 尺寸为[batch_size, 8, 96, 320]
         """
+        """
+        FCOS3D中outs为一个长度为5的元组
+            outs[0]是一个长度为5的列表, 存放每个特征图预测的得分, 尺寸分别如下:
+                [batch_size, 10, 116, 200]
+                [batch_size, 10, 58, 100]
+                [batch_size, 10, 29, 50]
+                [batch_size, 10, 15, 25]
+                [batch_size, 10, 8, 13]
+            outs[1]是一个长度为5的列表, 存放每个特征图预测的回归值, 尺寸分别如下
+                [batch_size, 9, 116, 200]
+                [batch_size, 9, 58, 100]
+                [batch_size, 9, 29, 50]
+                [batch_size, 9, 15, 25]
+                [batch_size, 9, 8, 13]
+            outs[2]是一个长度为5的列表, 存放每个特征图预测的角度分类结果, 尺寸分别如下
+                [batch_size, 2, 116, 200]
+                [batch_size, 2, 58, 100]
+                [batch_size, 2, 29, 50]
+                [batch_size, 2, 15, 25]
+                [batch_size, 2, 8, 13]
+            outs[3]是一个长度为5的列表, 存放每个特征图预测的attr_label, 尺寸分别如下
+                [batch_size, 9, 116, 200]
+                [batch_size, 9, 58, 100]
+                [batch_size, 9, 29, 50]
+                [batch_size, 9, 15, 25]
+                [batch_size, 9, 8, 13]
+            outs[4]是一个长度为5的列表, 存放每个特征图预测的centerness, 尺寸分别如下
+                [batch_size, 1, 116, 200]
+                [batch_size, 1, 58, 100]
+                [batch_size, 1, 29, 50]
+                [batch_size, 1, 15, 25]
+                [batch_size, 1, 8, 13]
+        """
         outs = self(x)
         batch_gt_instances_3d = []
         batch_gt_instances = []

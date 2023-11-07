@@ -72,7 +72,7 @@ class FCOS3DBBoxCoder(BaseBBoxCoder):
         bbox[:, 3:6] = scale_size(clone_bbox[:, 3:6]).float()
 
         if self.base_depths is None:
-            bbox[:, 2] = bbox[:, 2].exp()
+            bbox[:, 2] = bbox[:, 2].exp()   #* 深度需要求exp()
         elif len(self.base_depths) == 1:  # only single prior
             mean = self.base_depths[0][0]
             std = self.base_depths[0][1]
@@ -88,7 +88,7 @@ class FCOS3DBBoxCoder(BaseBBoxCoder):
             std = depth_priors[:, 1]
             bbox[:, 2] = mean + bbox.clone()[:, 2] * std
 
-        bbox[:, 3:6] = bbox[:, 3:6].exp()
+        bbox[:, 3:6] = bbox[:, 3:6].exp()   #* 尺寸的预测值也要求exp
         if self.base_dims is not None:
             assert len(self.base_dims) == cls_score.shape[1], \
                 'The number of anchor sizes should be equal to the number ' \

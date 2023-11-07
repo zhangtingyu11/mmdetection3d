@@ -92,6 +92,15 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
                  centerness_branch: Tuple[int] = (64, ),
                  init_cfg: OptConfigType = None,
                  **kwargs) -> None:
+        """对于FCOS3D来说
+        regress_ranges: ((-1, 48), (48, 96), (96, 192), (192, 384), (384, 100000000.0))
+        center_sampling: True
+        center_sample_radius: 1.5
+        norm_on_bbox: True
+        centerness_on_reg: True
+        centerness_alpha: 2.5
+        centerness_branch: (64, )
+        """
         self.regress_ranges = regress_ranges
         self.center_sampling = center_sampling
         self.center_sample_radius = center_sample_radius
@@ -188,6 +197,10 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
             super().forward_single(x)
 
         if self.centerness_on_reg:
+            """
+            FCOS3D中self.conv_centerness_prev为3*3的步长为1的卷积(256->64), GN, ReLU
+                    self.conv_centerness为1*1的步长为1的卷积(64->1)
+            """
             clone_reg_feat = reg_feat.clone()
             for conv_centerness_prev_layer in self.conv_centerness_prev:
                 clone_reg_feat = conv_centerness_prev_layer(clone_reg_feat)
@@ -200,7 +213,16 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
 
         bbox_pred = self.bbox_coder.decode(bbox_pred, scale, stride,
                                            self.training, cls_score)
-
+        """
+        FCOS3D的返回值
+            cls_score: [batch_size, 10, 特征图高度, 特征图宽度]
+            bbox_pred: [batch_size, 9, 特征图高度, 特征图宽度], 深度和尺寸都求了exp()
+            dir_cls_pred: [batch_size, 2, 特征图高度, 特征图宽度]
+            attr_pred: [batch_size, 9, 特征图高度, 特征图宽度]
+            centerness: [batch_size, 1, 特征图高度, 特征图宽度]
+            cls_feat: [batch_size, 256, 特征图高度, 特征图宽度]
+            reg_feat: [batch_size, 256, 特征图高度, 特征图宽度]
+        """
         return cls_score, bbox_pred, dir_cls_pred, attr_pred, centerness, \
             cls_feat, reg_feat
 
@@ -219,6 +241,7 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
             tuple[torch.Tensor]: ``boxes1`` and ``boxes2`` whose 7th
                 dimensions are changed.
         """
+        #* 这样拼接起来就是sin(theta1-theta2) = sin(theta1)cos(theta2)-cos(theta1)sin(theta2)
         rad_pred_encoding = torch.sin(boxes1[..., 6:7]) * torch.cos(
             boxes2[..., 6:7])
         rad_tg_encoding = torch.cos(boxes1[..., 6:7]) * torch.sin(boxes2[...,
@@ -251,8 +274,10 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
             torch.Tensor: Encoded direction targets.
         """
         rot_gt = reg_targets[..., 6]
+        #* 限制角度的范围在0~2*pi
         offset_rot = limit_period(rot_gt - dir_offset, dir_limit_offset,
                                   2 * np.pi)
+        #* 求角度的分类标签
         dir_cls_targets = torch.floor(offset_rot /
                                       (2 * np.pi / num_bins)).long()
         dir_cls_targets = torch.clamp(dir_cls_targets, min=0, max=num_bins - 1)
@@ -312,26 +337,60 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
         assert len(cls_scores) == len(bbox_preds) == len(centernesses) == len(
             attr_preds)
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
+        """
+        FCOS3D中all_level_points是一个长度为5的列表, 列表中的每个元素存放的是特征图上的点对应的原图的点的坐标
+        尺寸均为[特征图宽度*特征图高度, 2]
+        """
         all_level_points = self.get_points(featmap_sizes, bbox_preds[0].dtype,
                                            bbox_preds[0].device)
+        """
+        labels_3d: 长度为5的列表
+            labels_3d[0]: [23200*batch_size]
+            labels_3d[1]: [5800*batch_size]
+            labels_3d[2]: [1450*batch_size]
+            labels_3d[3]: [375*batch_size]
+            labels_3d[4]: [104*batch_size]
+        bbox_targets_3d: 长度为5的列表
+            bbox_targets_3d[0]: [23200*batch_size, 9]
+            bbox_targets_3d[1]: [5800*batch_size, 9]
+            bbox_targets_3d[2]: [1450*batch_size, 9]
+            bbox_targets_3d[3]: [375*batch_size, 9]
+            bbox_targets_3d[4]: [104*batch_size, 9]
+        centerness_targets: 长度为5的列表
+            centerness_targets[0]: [23200*batch_size]
+            centerness_targets[1]: [5800*batch_size]
+            centerness_targets[2]: [1450*batch_size]
+            centerness_targets[3]: [375*batch_size]
+            centerness_targets[4]: [104*batch_size]
+        attr_targets: 长度为5的列表
+            attr_targets[0]: [23200*batch_size]
+            attr_targets[1]: [5800*batch_size]
+            attr_targets[2]: [1450*batch_size]
+            attr_targets[3]: [375*batch_size]
+            attr_targets[4]: [104*batch_size]
+        """
         labels_3d, bbox_targets_3d, centerness_targets, attr_targets = \
             self.get_targets(all_level_points, batch_gt_instances_3d,
                              batch_gt_instacnes)
 
         num_imgs = cls_scores[0].size(0)
         # flatten cls_scores, bbox_preds, dir_cls_preds and centerness
+        #* 列表中的元素从[batch_size, 10, 特征图高度, 特征图宽度]->[batch_size*特征图高度*特征图宽度, 10]
         flatten_cls_scores = [
             cls_score.permute(0, 2, 3, 1).reshape(-1, self.cls_out_channels)
             for cls_score in cls_scores
         ]
+        #* 列表中的元素从[batch_size, 9, 特征图高度, 特征图宽度]->[batch_size*特征图高度*特征图宽度, 9]
         flatten_bbox_preds = [
             bbox_pred.permute(0, 2, 3, 1).reshape(-1, sum(self.group_reg_dims))
             for bbox_pred in bbox_preds
         ]
+        #* 列表中的元素从[batch_size, 2, 特征图高度, 特征图宽度]->[batch_size*特征图高度*特征图宽度, 2]
         flatten_dir_cls_preds = [
             dir_cls_pred.permute(0, 2, 3, 1).reshape(-1, 2)
             for dir_cls_pred in dir_cls_preds
         ]
+        #* 列表中的元素从[batch_size, 1, 特征图高度, 特征图宽度]->[batch_size*特征图高度*特征图宽度, 1]
         flatten_centerness = [
             centerness.permute(0, 2, 3, 1).reshape(-1)
             for centerness in centernesses
@@ -345,11 +404,13 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
         flatten_centerness_targets = torch.cat(centerness_targets)
 
         # FG cat_id: [0, num_classes -1], BG cat_id: num_classes
+        #* 计算正样本的个数
         bg_class_ind = self.num_classes
         pos_inds = ((flatten_labels_3d >= 0)
                     & (flatten_labels_3d < bg_class_ind)).nonzero().reshape(-1)
         num_pos = len(pos_inds)
 
+        #* 分类的loss是FocalLoss
         loss_cls = self.loss_cls(
             flatten_cls_scores,
             flatten_labels_3d,
@@ -379,6 +440,7 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
                 pos_centerness_targets.shape)
 
             code_weight = self.train_cfg.get('code_weight', None)
+            #* 每个回归的量的权重, delta_x, delta_y的权重为1, 深度权重为0.2, 尺寸的权重为1, 方向角的权重为1, 速度的权重为0.05
             if code_weight:
                 assert len(code_weight) == sum(self.group_reg_dims)
                 bbox_weights = bbox_weights * bbox_weights.new_tensor(
@@ -387,14 +449,15 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
             if self.use_direction_classifier:
                 pos_dir_cls_targets = self.get_direction_target(
                     pos_bbox_targets_3d,
-                    self.dir_offset,
-                    self.dir_limit_offset,
+                    self.dir_offset,    #* 0.7854
+                    self.dir_limit_offset,     #* 0
                     one_hot=False)
 
             if self.diff_rad_by_sin:
                 pos_bbox_preds, pos_bbox_targets_3d = self.add_sin_difference(
                     pos_bbox_preds, pos_bbox_targets_3d)
 
+            #* self.loss_bbox是SmoothL1
             loss_offset = self.loss_bbox(
                 pos_bbox_preds[:, :2],
                 pos_bbox_targets_3d[:, :2],
@@ -423,6 +486,7 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
                     weight=bbox_weights[:, 7:9],
                     avg_factor=equal_weights.sum())
 
+            #* self.loss_centerness是CrossEntropyLoss
             loss_centerness = self.loss_centerness(pos_centerness,
                                                    pos_centerness_targets)
 
@@ -430,6 +494,7 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
             loss_dir = None
             # TODO: add more check for use_direction_classifier
             if self.use_direction_classifier:
+                #* self.loss_dir是CrossEntropyLoss
                 loss_dir = self.loss_dir(
                     pos_dir_cls_preds,
                     pos_dir_cls_targets,
@@ -439,6 +504,7 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
             # attribute classification loss
             loss_attr = None
             if self.pred_attrs:
+                #* self.loss_attr是CrossEntropyLoss
                 loss_attr = self.loss_attr(
                     pos_attr_preds,
                     pos_attr_targets,
@@ -733,6 +799,9 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
         Returns:
             Tensor: points of each image.
         """
+        """
+        根据步长计算特征图上每个点对应原图上的点的坐标, 返回的是尺寸为[特征图宽度*特征图高度, 2]的张量, 表示对应的原图上的所有的点
+        """
         y, x = super()._get_points_single(featmap_size, stride, dtype, device)
         points = torch.stack((x.reshape(-1) * stride, y.reshape(-1) * stride),
                              dim=-1) + stride // 2
@@ -775,7 +844,9 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
                 points[i]) for i in range(num_levels)
         ]
         # concat all levels points and regress ranges
+        #* 将多个特征图的检测范围拼接在一起, 对于FCOS3D来说, 尺寸为[30929, 2], 其中2表示[左边界, 右边界]
         concat_regress_ranges = torch.cat(expanded_regress_ranges, dim=0)
+        #* 将多个特征图对应的原图的点进行拼接, 对于FCOS3D来说, 尺寸为[30929, 2]其中2表示对应的原图的坐标
         concat_points = torch.cat(points, dim=0)
 
         # the number of points per img, per lvl
@@ -790,6 +861,12 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
                     )
 
         # get labels and bbox_targets of each image
+        """
+        labels_3d_list是一个长度为batch_size的列表, 列表中的每个元素记录了每个样本的3D标签, 尺寸为[30929], 0~10, 其中10表示背景类
+        bbox_targets_3d_list是一个长度为batch_size的列表, 列表中的每个元素记录了每个样本的回归值, 尺寸为[30929, 9]
+        centerness_targets_list是一个长度为batch_size的列表, 列表中的每个元素记录了每个样本的centerness, 尺寸为[30929]
+        attr_targets_list是一个长度为batch_size的列表, 列表中的每个元素记录了每个样本的attr label, 尺寸为[30929], 0~9, 9为背景类
+        """
         _, _, labels_3d_list, bbox_targets_3d_list, centerness_targets_list, \
             attr_targets_list = multi_apply(
                 self._get_target_single,
@@ -817,6 +894,7 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
         ]
 
         # concat per level image
+        #* 将同一个特征图的标签拼接在一起, 沿着batch_size维度
         concat_lvl_labels_3d = []
         concat_lvl_bbox_targets_3d = []
         concat_lvl_centerness_targets = []
@@ -836,9 +914,36 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
                 torch.cat(
                     [attr_targets[i] for attr_targets in attr_targets_list]))
             if self.norm_on_bbox:
+                #* 希望每个包围框的回归的delta_x和delta_y都差不多
                 bbox_targets_3d[:, :
                                 2] = bbox_targets_3d[:, :2] / self.strides[i]
             concat_lvl_bbox_targets_3d.append(bbox_targets_3d)
+        """
+        concat_lvl_labels_3d: 长度为5的列表
+            concat_lvl_labels_3d[0]: [23200*batch_size]
+            concat_lvl_labels_3d[1]: [5800*batch_size]
+            concat_lvl_labels_3d[2]: [1450*batch_size]
+            concat_lvl_labels_3d[3]: [375*batch_size]
+            concat_lvl_labels_3d[4]: [104*batch_size]
+        concat_lvl_bbox_targets_3d: 长度为5的列表
+            concat_lvl_bbox_targets_3d[0]: [23200*batch_size, 9]
+            concat_lvl_bbox_targets_3d[1]: [5800*batch_size, 9]
+            concat_lvl_bbox_targets_3d[2]: [1450*batch_size, 9]
+            concat_lvl_bbox_targets_3d[3]: [375*batch_size, 9]
+            concat_lvl_bbox_targets_3d[4]: [104*batch_size, 9]
+        concat_lvl_centerness_targets: 长度为5的列表
+            concat_lvl_centerness_targets[0]: [23200*batch_size]
+            concat_lvl_centerness_targets[1]: [5800*batch_size]
+            concat_lvl_centerness_targets[2]: [1450*batch_size]
+            concat_lvl_centerness_targets[3]: [375*batch_size]
+            concat_lvl_centerness_targets[4]: [104*batch_size]
+        concat_lvl_attr_targets: 长度为5的列表
+            concat_lvl_attr_targets[0]: [23200*batch_size]
+            concat_lvl_attr_targets[1]: [5800*batch_size]
+            concat_lvl_attr_targets[2]: [1450*batch_size]
+            concat_lvl_attr_targets[3]: [375*batch_size]
+            concat_lvl_attr_targets[4]: [104*batch_size]
+        """
         return concat_lvl_labels_3d, concat_lvl_bbox_targets_3d, \
             concat_lvl_centerness_targets, concat_lvl_attr_targets
 
@@ -858,6 +963,7 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
         attr_labels = gt_instances_3d.attr_labels
 
         if not isinstance(gt_bboxes_3d, torch.Tensor):
+            #* 将3D包围框从CameraInstance3DBoxes转化成Tensor
             gt_bboxes_3d = gt_bboxes_3d.tensor.to(gt_bboxes.device)
         if num_gts == 0:
             return gt_labels.new_full((num_points,), self.background_label), \
@@ -870,32 +976,49 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
                        (num_points,), self.attr_background_label)
 
         # change orientation to local yaw
+        #* 从yaw转到观测角
         gt_bboxes_3d[..., 6] = -torch.atan2(
             gt_bboxes_3d[..., 0], gt_bboxes_3d[..., 2]) + gt_bboxes_3d[..., 6]
-
+        
+        #* 计算gt包围框的面积
         areas = (gt_bboxes[:, 2] - gt_bboxes[:, 0]) * (
             gt_bboxes[:, 3] - gt_bboxes[:, 1])
         areas = areas[None].repeat(num_points, 1)
+        #* FCOS3D: [30929, 2]->[30929, gt个数, 2]
         regress_ranges = regress_ranges[:, None, :].expand(
             num_points, num_gts, 2)
+        #* FCOS3D: [30929, 4]->[30929, gt个数, 4]
         gt_bboxes = gt_bboxes[None].expand(num_points, num_gts, 4)
+        #* FCOS3D: [30929, 2]->[30929, gt个数, 2]
         centers_2d = centers_2d[None].expand(num_points, num_gts, 2)
+        #* FCOS3D: [30929, 9]->[30929, gt个数, 9]
         gt_bboxes_3d = gt_bboxes_3d[None].expand(num_points, num_gts,
                                                  self.bbox_code_size)
+        #* FCOS3D: [30929, 1]->[30929, gt个数, 1]
         depths = depths[None, :, None].expand(num_points, num_gts, 1)
         xs, ys = points[:, 0], points[:, 1]
+        #* FCOS3D: [30929, gt个数], 特征图的点在原图上对应的x坐标
         xs = xs[:, None].expand(num_points, num_gts)
+        #* FCOS3D: [30929, gt个数], 特征图的点在原图上对应的y坐标
         ys = ys[:, None].expand(num_points, num_gts)
 
+        #* FCOS3D: [30929, gt个数, 1], 特征图对应的原图上的x坐标和3D中心点投影到图像上的2D中心点x坐标的差
         delta_xs = (xs - centers_2d[..., 0])[..., None]
+        #* FCOS3D: [30929, gt个数, 1], 特征图对应的原图上的y坐标和3D中心点投影到图像上的2D中心点y坐标的差
         delta_ys = (ys - centers_2d[..., 1])[..., None]
+        #* 目标[30929, gt个数, 9], 9对应[投影的3D中心点x偏移, 投影的3D中心点y偏移, 深度, l, h, w, 角度, vx, vy]
         bbox_targets_3d = torch.cat(
             (delta_xs, delta_ys, depths, gt_bboxes_3d[..., 3:]), dim=-1)
 
+        #* 到包围框左边的距离
         left = xs - gt_bboxes[..., 0]
+        #* 到包围框右边的距离
         right = gt_bboxes[..., 2] - xs
+        #* 到包围框上边的距离
         top = ys - gt_bboxes[..., 1]
+        #* 到包围框下边的距离
         bottom = gt_bboxes[..., 3] - ys
+        #* [30929, gt个数, 4], 到2D包围框四个边的距离
         bbox_targets = torch.stack((left, top, right, bottom), -1)
 
         assert self.center_sampling is True, 'Setting center_sampling to '\
@@ -913,46 +1036,66 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
             lvl_end = lvl_begin + num_points_lvl
             stride[lvl_begin:lvl_end] = self.strides[lvl_idx] * radius
             lvl_begin = lvl_end
-
+        #* 中心点会在一定的范围内, FCOS3D中是1.5*stride
         center_gts[..., 0] = center_xs - stride
         center_gts[..., 1] = center_ys - stride
         center_gts[..., 2] = center_xs + stride
         center_gts[..., 3] = center_ys + stride
 
+        #* 点距离中心点范围的左边界的距离
         cb_dist_left = xs - center_gts[..., 0]
+        #* 点距离中心点范围的右边界的距离
         cb_dist_right = center_gts[..., 2] - xs
+        #* 点距离中心点范围的上边界的距离
         cb_dist_top = ys - center_gts[..., 1]
+        #* 点距离中心点范围的下边界的距离
         cb_dist_bottom = center_gts[..., 3] - ys
         center_bbox = torch.stack(
             (cb_dist_left, cb_dist_top, cb_dist_right, cb_dist_bottom), -1)
+        #* 找到每个点在不在包围框里面, 如果在就是True, 尺寸为[30929, gt个数]
         inside_gt_bbox_mask = center_bbox.min(-1)[0] > 0
 
         # condition2: limit the regression range for each location
+        #* 计算偏差在不在可允许的范围内, inside_regress_range的尺寸为[30929, gt个数]
         max_regress_distance = bbox_targets.max(-1)[0]
         inside_regress_range = (
             (max_regress_distance >= regress_ranges[..., 0])
             & (max_regress_distance <= regress_ranges[..., 1]))
 
         # center-based criterion to deal with ambiguity
+        #* dists为x, y坐标的偏差的距离, sqrt(delta_xs*delta_xs + delta_ys*delta_ys), 尺寸为[30929, gt个数]
         dists = torch.sqrt(torch.sum(bbox_targets_3d[..., :2]**2, dim=-1))
         dists[inside_gt_bbox_mask == 0] = INF
         dists[inside_regress_range == 0] = INF
         min_dist, min_dist_inds = dists.min(dim=1)
-
+        
+        #* 标签是距离最近的gt
         labels = gt_labels[min_dist_inds]
         labels_3d = gt_labels_3d[min_dist_inds]
         attr_labels = attr_labels[min_dist_inds]
+        #* 设置回归的范围不在区间里, 点不在gt里的包围框的标签设置为背景
         labels[min_dist == INF] = self.background_label  # set as BG
         labels_3d[min_dist == INF] = self.background_label  # set as BG
         attr_labels[min_dist == INF] = self.attr_background_label
 
         bbox_targets = bbox_targets[range(num_points), min_dist_inds]
         bbox_targets_3d = bbox_targets_3d[range(num_points), min_dist_inds]
+        #* 1.414*stride[:, 0] 是stride的斜边长, 相对距离是针对stride计算的
         relative_dists = torch.sqrt(
             torch.sum(bbox_targets_3d[..., :2]**2,
                       dim=-1)) / (1.414 * stride[:, 0])
         # [N, 1] / [N, 1]
+        #* 参考论文是 exp(-alpha * (delta_x*delta_x + delta_y*delta_y)), 和论文中的公式略有出入
         centerness_targets = torch.exp(-self.centerness_alpha * relative_dists)
 
+        """
+        FCOS3D的返回值:
+            labels: [30929], 表示特征图的每个点在原图上对应的点的标签, 0~10, 10表示背景类
+            bbox_targets: [30929, 4], 表示特征图的每个点在原图上对应的点距离对应的gt包围框的四个边的距离
+            labels_3d: [30929], 表示特征图的每个点在原图上对应的点的标签, 0~10, 10表示背景类
+            bbox_targets_3d: [30929, 9], 表示特征图的每个点在原图上对应回归值
+            centerness_targets: [30929], 表示特征图的每个点在原图上对应的centerness值
+            attr_labels: [30929], 表示特征图的每个点在原图上对应的attr_label, 0~9, 9表示背景类
+        """
         return labels, bbox_targets, labels_3d, bbox_targets_3d, \
             centerness_targets, attr_labels
