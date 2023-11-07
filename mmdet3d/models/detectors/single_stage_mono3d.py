@@ -175,6 +175,34 @@ class SingleStageMono3DDetector(SingleStageDetector):
                     [batch_size, 1024, 58, 100]
                     [batch_size, 2048, 29, 50]
         """
+        """
+        FCOS Neck: 输入是backbone的输出, 尺寸如下:
+        尺寸分别为[batch_size, 256, 232, 400], 记为inputs0
+                [batch_size, 512, 116, 200], 记为inputs1
+                [batch_size, 1024, 58, 100], 记为inputs2
+                [batch_size, 2048, 29, 50], 记为inputs3
+        将inputs1送入1*1步长为1的卷积(512->256)中, 记为x1
+        将inputs2送入1*1步长为1的卷积(1024->256)中, 记为x2
+        将inputs3送入1*1步长为1的卷积(2048->256)中, 记为x3
+        将x3通过插值变成x2的形状, 再和x2相加变成新的x2
+        将新的x2通过插值变成x1的形状, 再和x1相加变成新的x1
+        
+        用三个权值不共享的3*3步长为1的卷积处理x1, x2, x3
+        
+        将x3的副本用3*3步长为2的卷积(256->256)处理, 记为x1, x2, x3, x4
+        它们的尺寸依次为:
+            [batch_size, 256, 116, 200]
+            [batch_size, 256, 58, 100]
+            [batch_size, 256, 29, 50]
+            [batch_size, 256, 15, 25]
+        将ReLU, 3*3步长为2的卷积(256->256)作用于x4, 得到x5, 尺寸为[batch_size, 256, 8, 13]
+        最后的输出是一个元组, 元组中的元素尺寸如下
+            [batch_size, 256, 116, 200]
+            [batch_size, 256, 58, 100]
+            [batch_size, 256, 29, 50]
+            [batch_size, 256, 15, 25]
+            [batch_size, 256, 8, 13]
+        """
         x = self.backbone(batch_imgs)
         if self.with_neck:
             x = self.neck(x)
