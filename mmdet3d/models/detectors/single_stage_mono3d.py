@@ -189,12 +189,7 @@ class SingleStageMono3DDetector(SingleStageDetector):
         
         用三个权值不共享的3*3步长为1的卷积处理x1, x2, x3
         
-        将x3的副本用3*3步长为2的卷积(256->256)处理, 记为x1, x2, x3, x4
-        它们的尺寸依次为:
-            [batch_size, 256, 116, 200]
-            [batch_size, 256, 58, 100]
-            [batch_size, 256, 29, 50]
-            [batch_size, 256, 15, 25]
+        将x3的副本用3*3步长为2的卷积(256->256)处理, 得到x4, 尺寸为[batch_size, 256, 15, 25]
         将ReLU, 3*3步长为2的卷积(256->256)作用于x4, 得到x5, 尺寸为[batch_size, 256, 8, 13]
         最后的输出是一个元组, 元组中的元素尺寸如下
             [batch_size, 256, 116, 200]
@@ -286,6 +281,28 @@ class SingleStageMono3DDetector(SingleStageDetector):
                 [batch_size, 512, 48, 156]
                 [batch_size, 1024, 24, 78]
                 [batch_size, 2048, 12, 39]
+        """
+        """
+        #! PGD Neck KITTI:
+            Neck是FPN, 输入是一个长度为4的元组inputs, 元组里面的元素尺寸分别是:
+                [batch_size, 256, 96, 312]
+                [batch_size, 512, 48, 156]
+                [batch_size, 1024, 24, 78]
+                [batch_size, 2048, 12, 39]
+            对inputs[0]使用1*1的步长为1的卷积(256->256), 记为x0, 尺寸为[batch_size, 256, 96, 312]
+            对inputs[1]使用1*1的步长为1的卷积(512->256), 记为x1, 尺寸为[batch_size, 256, 48, 156]
+            对inputs[2]使用1*1的步长为1的卷积(1024->256), 记为x2, 尺寸为[batch_size, 256, 24, 78]
+            对inputs[3]使用1*1的步长为1的卷积(2048->256), 记为x3, 尺寸为[batch_size, 256, 12, 39]
+            将x3通过插值变成x2的形状, 再和x2相加变成新的x2
+            将新的x2通过插值变成x1的形状, 再和x1相加变成新的x1
+            将新的x1通过插值变成x0的形状, 再和x0相加变成新的x0
+            
+            用四个权值不共享的3*3步长为1的卷积处理x0, x1, x2, x3
+            最后的输出是一个元组, 元组中的元素尺寸如下
+                [batch_size, 256, 96, 312]
+                [batch_size, 256, 48, 156]
+                [batch_size, 256, 24, 78]
+                [batch_size, 256, 12, 39]
         """
         x = self.backbone(batch_imgs)
         if self.with_neck:
