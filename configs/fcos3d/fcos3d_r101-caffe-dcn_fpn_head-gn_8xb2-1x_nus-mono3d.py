@@ -42,13 +42,13 @@ test_pipeline = [
 ]
 
 train_dataloader = dict(
-    batch_size=2, num_workers=2, dataset=dict(pipeline=train_pipeline))
+    batch_size=4, num_workers=2, dataset=dict(pipeline=train_pipeline))
 test_dataloader = dict(dataset=dict(pipeline=test_pipeline))
 val_dataloader = dict(dataset=dict(pipeline=test_pipeline))
 
 # optimizer
 optim_wrapper = dict(
-    optimizer=dict(lr=0.002),
+    optimizer=dict(lr=0.002/4),
     paramwise_cfg=dict(bias_lr_mult=2., bias_decay_mult=0.),
     clip_grad=dict(max_norm=35, norm_type=2))
 

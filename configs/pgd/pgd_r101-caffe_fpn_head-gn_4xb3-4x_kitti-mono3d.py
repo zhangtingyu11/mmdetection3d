@@ -96,7 +96,7 @@ test_pipeline = [
 ]
 
 train_dataloader = dict(
-    batch_size=3, num_workers=3, dataset=dict(pipeline=train_pipeline))
+    batch_size=6, num_workers=3, dataset=dict(pipeline=train_pipeline))
 test_dataloader = dict(dataset=dict(pipeline=test_pipeline))
 val_dataloader = dict(dataset=dict(pipeline=test_pipeline))
 
