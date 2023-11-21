@@ -256,10 +256,19 @@ class PGDHead(FCOSMono3DHead):
         depth_cls_pred = None
         if self.use_depth_classifier:
             clone_reg_feat = reg_feat.clone()
+            """
+            PGD KITTI中self.conv_depth_cls_prev为3*3的步长为1的卷积(256->256), GroupNorm, ReLU
+                       self.conv_depth_cls为1*1的步长为1的卷积(256->8)
+            """
             for conv_depth_cls_prev_layer in self.conv_depth_cls_prev:
                 clone_reg_feat = conv_depth_cls_prev_layer(clone_reg_feat)
             depth_cls_pred = self.conv_depth_cls(clone_reg_feat)
 
+        """
+        PGD KITTI中求解weight只有一层
+            self.conv_weight_prevs[0]为3*3的步长为1的卷积(256->256), GroupNorm, ReLU
+            self.conv_weights[0]为1*1的步长为1的卷积(256->1)
+        """
         weight = None
         if self.weight_dim != -1:
             weight = []
@@ -271,6 +280,16 @@ class PGDHead(FCOSMono3DHead):
                 weight.append(self.conv_weights[i](clone_reg_feat))
             weight = torch.cat(weight, dim=1)
 
+        """
+        PGD KITTI的输出:
+            cls_score: [batch_size, 3, 特征图高度, 特征图宽度]
+            bbox_pred: [batch_size, 27, 特征图高度, 特征图宽度]
+            dir_cls_pred: [batch_size, 2, 特征图高度, 特征图宽度]
+            depth_cls_pred: [batch_size, 8, 特征图高度, 特征图宽度]
+            weight: [batch_size, 1, 特征图高度, 特征图宽度]
+            attr_pred: None
+            centerness: [batch_size, 1, 特征图高度, 特征图宽度]
+        """
         return cls_score, bbox_pred, dir_cls_pred, depth_cls_pred, weight, \
             attr_pred, centerness
 
@@ -362,12 +381,13 @@ class PGDHead(FCOSMono3DHead):
         pos_strided_bbox2d_preds = flatten_strided_bbox2d_preds[pos_inds]
         pos_bbox_targets_3d = flatten_bbox_targets_3d[pos_inds]
         pos_strides = flatten_strides[pos_inds]
-
+        #* 将到四条边的距离转化成左上角和右下角坐标, [正样本个数, 4], 4维表示[左上角x坐标, 左上角y坐标, 右下角x坐标, 右下角y坐标]
         pos_decoded_bbox2d_preds = distance2bbox(pos_points,
                                                  pos_strided_bbox2d_preds)
-
+        #* 前两位预测的2D中心点的offset
         pos_strided_bbox_preds[:, :2] = \
             pos_points - pos_strided_bbox_preds[:, :2]
+        #* 通过target和特征图上的点求3D中心点的投影值的真实坐标
         pos_bbox_targets_3d[:, :2] = \
             pos_points - pos_bbox_targets_3d[:, :2]
 
@@ -396,18 +416,24 @@ class PGDHead(FCOSMono3DHead):
             view_shape = views[idx].shape
             cam2img[:view_shape[0], :view_shape[1]] = \
                 pos_strided_bbox_preds.new_tensor(views[idx])
-
+            
+            #* 预测的中心点
             centers2d_preds = pos_strided_bbox_preds.clone()[mask, :2]
+            #* 通过真实的3D中心点的投影和深度求真实的3D中心点
             centers2d_targets = pos_bbox_targets_3d.clone()[mask, :2]
             centers3d_targets = points_img2cam(pos_bbox_targets_3d[mask, :3],
                                                views[idx])
 
             # use predicted depth to re-project the 2.5D centers
+            #* 通过预测的中心点和深度计算预测的3D中心点
             pos_strided_bbox_preds[mask, :3] = points_img2cam(
                 pos_strided_bbox_preds[mask, :3], views[idx])
+            
+            #* 3D中心点的投影值的真实值
             pos_bbox_targets_3d[mask, :3] = centers3d_targets
 
             # depth fixed when computing re-project 3D bboxes
+            #* 将预测的深度变成真实的深度
             pos_strided_bbox_preds[mask, 2] = \
                 pos_bbox_targets_3d.clone()[mask, 2]
 
@@ -415,25 +441,31 @@ class PGDHead(FCOSMono3DHead):
             if self.use_direction_classifier:
                 pos_dir_cls_scores = torch.max(
                     pos_dir_cls_preds[mask], dim=-1)[1]
+                #* 将包围框预测的局部角度转化为全局角度
                 pos_strided_bbox_preds[mask] = self.bbox_coder.decode_yaw(
                     pos_strided_bbox_preds[mask], centers2d_preds,
                     pos_dir_cls_scores, self.dir_offset, cam2img)
+            #* 将真实的包围框的局部角度转化为全局角度
             pos_bbox_targets_3d[mask, 6] = torch.atan2(
                 centers2d_targets[:, 0] - cam2img[0, 2],
                 cam2img[0, 0]) + pos_bbox_targets_3d[mask, 6]
 
+            #* 获取预测包围框的角点的3D坐标
             corners = batch_img_metas[0]['box_type_3d'](
                 pos_strided_bbox_preds[mask],
                 box_dim=self.bbox_coder.bbox_code_size,
                 origin=(0.5, 0.5, 0.5)).corners
+            #* 将预测包围框的角点的3D坐标转化为图像坐标
             box_corners_in_image[mask] = points_cam2img(corners, cam2img)
 
+            #* 获取gt3D框在图像上的点坐标
             corners_gt = batch_img_metas[0]['box_type_3d'](
                 pos_bbox_targets_3d[mask, :self.bbox_code_size],
                 box_dim=self.bbox_coder.bbox_code_size,
                 origin=(0.5, 0.5, 0.5)).corners
             box_corners_in_image_gt[mask] = points_cam2img(corners_gt, cam2img)
 
+        #* 求包围预测框的最小2D包围框
         minxy = torch.min(box_corners_in_image, dim=1)[0]
         maxxy = torch.max(box_corners_in_image, dim=1)[0]
         proj_bbox2d_preds = torch.cat([minxy, maxxy], dim=1)
@@ -441,6 +473,7 @@ class PGDHead(FCOSMono3DHead):
         outputs = (proj_bbox2d_preds, pos_decoded_bbox2d_preds)
 
         if with_kpts:
+            #* 预测的角点的偏差, 转换成0~1
             norm_strides = pos_strides * self.regress_ranges[0][1] / \
                 self.strides[0]
             kpts_targets = box_corners_in_image_gt - pos_points[..., None, :]
@@ -592,9 +625,39 @@ class PGDHead(FCOSMono3DHead):
             f'attr_preds: {len(cls_scores)}, {len(bbox_preds)}, ' \
             f'{len(dir_cls_preds)}, {len(depth_cls_preds)}, {len(weights)}' \
             f'{len(centernesses)}, {len(attr_preds)} are inconsistent.'
+        """
+        #!  bbox loss里面还有一个可学习的参数scale, 初始是1, 用来控制每个loss的权重
+        PGD KITTI:
+            featmap_sizes: 特征图尺寸[torch.Size([96, 312]), torch.Size([48, 156]), torch.Size([24, 78]), torch.Size([12, 39])]
+            all_level_points: 通过特征图尺寸和步长计算点的位置[尺寸为[96*312, 2], 尺寸为[48*156, 2], 尺寸为[24*78, 2], 尺寸为[12*39, 2]]
+        """
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
         all_level_points = self.get_points(featmap_sizes, bbox_preds[0].dtype,
                                            bbox_preds[0].device)
+        """
+        PGD KITTI:
+            labels_3d: 长度为4(总共有四层特征)的列表, 列表中的每一个元素表示这一层中所有的图像上的点标签, 尺寸如下
+                [179712], 179712 = 6(batch_size) * 96(特征图高度) * 312(特征图宽度)
+                [44928], 44928 = 6(batch_size) * 48(特征图高度) * 156(特征图宽度)
+                [11232], 11232 = 6(batch_size) * 24(特征图高度) * 78(特征图宽度)
+                [2808], 2808 = 6(batch_size) * 12(特征图高度) * 39(特征图宽度)
+            bbox_targets_3d: 长度为4(总共有四层特征)的列表, 列表中的每一个元素表示这一层中所有的图像上的点的回归值, 尺寸如下
+                11维表示[3Dx坐标偏差,3Dy坐标偏差, 深度, 尺寸(3), 航向角, 该点到2D边框的值(4)], 注意3D偏差和2D偏差都需要除步长
+                [179712, 11], 179712 = 6(batch_size) * 96(特征图高度) * 312(特征图宽度)
+                [44928, 11], 44928 = 6(batch_size) * 48(特征图高度) * 156(特征图宽度)
+                [11232, 11], 11232 = 6(batch_size) * 24(特征图高度) * 78(特征图宽度)
+                [2808, 11], 2808 = 6(batch_size) * 12(特征图高度) * 39(特征图宽度)
+            centerness_targets: 长度为4(总共有四层特征)的列表, 列表中的每一个元素表示这一层中所有的图像上的点的centerness, 尺寸如下
+                [179712], 179712 = 6(batch_size) * 96(特征图高度) * 312(特征图宽度)
+                [44928], 44928 = 6(batch_size) * 48(特征图高度) * 156(特征图宽度)
+                [11232], 11232 = 6(batch_size) * 24(特征图高度) * 78(特征图宽度)
+                [2808], 2808 = 6(batch_size) * 12(特征图高度) * 39(特征图宽度)
+            attr_targets: 长度为4(总共有四层特征)的列表, 列表中的每一个元素表示这一层中所有的图像上的点的attr label(全是-1), 尺寸如下
+                [179712], 179712 = 6(batch_size) * 96(特征图高度) * 312(特征图宽度)
+                [44928], 44928 = 6(batch_size) * 48(特征图高度) * 156(特征图宽度)
+                [11232], 11232 = 6(batch_size) * 24(特征图高度) * 78(特征图宽度)
+                [2808], 2808 = 6(batch_size) * 12(特征图高度) * 39(特征图宽度)
+        """
         labels_3d, bbox_targets_3d, centerness_targets, attr_targets = \
             self.get_targets(
                 all_level_points, batch_gt_instances_3d, batch_gt_instances)
@@ -605,6 +668,7 @@ class PGDHead(FCOSMono3DHead):
             cls_score.permute(0, 2, 3, 1).reshape(-1, self.cls_out_channels)
             for cls_score in cls_scores
         ]
+        #* 把多个图像, 多个尺度的target和预测结果合并
         flatten_cls_scores = torch.cat(flatten_cls_scores)
         flatten_labels_3d = torch.cat(labels_3d)
         flatten_bbox_targets_3d = torch.cat(bbox_targets_3d)
@@ -627,6 +691,15 @@ class PGDHead(FCOSMono3DHead):
             flatten_labels_3d,
             avg_factor=num_pos + num_imgs)  # avoid num_pos is 0
 
+        """
+        PGD KITTI:
+            pos_bbox_preds: 正样本的回归值, [正样本个数, 27]
+            pos_dir_cls_preds: 正样本的航向分类预测值, [正样本个数, 2]
+            pos_depth_cls_preds: 正样本的深度分类预测值, [正样本个数, 8]
+            pos_weights: 正样本的深度的不确定性, 即log(不确定性), 可以参考MonoFlex的公式10)
+            pos_attr_preds: None
+            pos_centerness: 正样本的centerness预测值, [正样本个数]
+        """
         pos_bbox_preds, pos_dir_cls_preds, pos_depth_cls_preds, pos_weights, \
             pos_attr_preds, pos_centerness = self.get_pos_predictions(
                 bbox_preds, dir_cls_preds, depth_cls_preds, weights,
@@ -649,9 +722,10 @@ class PGDHead(FCOSMono3DHead):
             code_weight = self.train_cfg.get('code_weight', None)
             if code_weight:
                 assert len(code_weight) == sum(self.group_reg_dims)
+                #* PGD KITTI: [正样本个数, 27], 权重根据code_weight来
                 bbox_weights = bbox_weights * bbox_weights.new_tensor(
                     code_weight)
-
+            #* 预测的角度的偏差的sin值要差不多(可以相差180度)
             if self.diff_rad_by_sin:
                 pos_bbox_preds, pos_bbox_targets_3d = self.add_sin_difference(
                     pos_bbox_preds, pos_bbox_targets_3d)
@@ -702,8 +776,10 @@ class PGDHead(FCOSMono3DHead):
                 pos_prob_depth_preds = self.bbox_coder.decode_prob_depth(
                     pos_depth_cls_preds, self.depth_range, self.depth_unit,
                     self.division, self.num_depth_cls)
+                #* self.fuse_lambda参考PGD论文中的公式2, 是一个可学习的参数
                 sig_alpha = torch.sigmoid(self.fuse_lambda)
                 if self.weight_dim != -1:
+                    #* PGD KITTI的深度loss和MonoFlex中的公式10类似, 不过把L1 loss换成了Smooth L1 loss
                     loss_fuse_depth = self.loss_depth(
                         sig_alpha * pos_bbox_preds[:, 2] +
                         (1 - sig_alpha) * pos_prob_depth_preds,
@@ -725,6 +801,12 @@ class PGDHead(FCOSMono3DHead):
             if self.pred_keypoints:
                 # use smoothL1 to compute consistency loss for keypoints
                 # normalize the offsets with strides
+                """
+                PGD KITTI:
+                    proj_bbox2d_preds是直接预测的2D包围框
+                    pos_decoded_bbox2d_preds是预测的3D包围框投影出来的最小2D包围框
+                    kpts_targets角点到特征图上的点真实偏差
+                """
                 proj_bbox2d_preds, pos_decoded_bbox2d_preds, kpts_targets = \
                     self.get_proj_bbox2d(*proj_bbox2d_inputs, with_kpts=True)
                 loss_dict['loss_kpts'] = self.loss_bbox(
@@ -743,12 +825,13 @@ class PGDHead(FCOSMono3DHead):
                 if not self.pred_keypoints:
                     proj_bbox2d_preds, pos_decoded_bbox2d_preds = \
                         self.get_proj_bbox2d(*proj_bbox2d_inputs)
+                #* PGD KITTI里面的一致性loss是GIoU loss
                 loss_dict['loss_consistency'] = self.loss_consistency(
                     proj_bbox2d_preds,
                     pos_decoded_bbox2d_preds,
                     weight=bbox_weights[:, -4:],
                     avg_factor=equal_weights.sum())
-
+            #* PGD KITTI里面的centerness loss是cross entropy loss
             loss_dict['loss_centerness'] = self.loss_centerness(
                 pos_centerness, pos_centerness_targets)
 
@@ -1157,17 +1240,26 @@ class PGDHead(FCOSMono3DHead):
         assert len(points) == len(self.regress_ranges)
         num_levels = len(points)
         # expand regress ranges to align with points
+        """
+        将回归的范围拓展到每一个点
+        PGD KITTI:
+            [尺寸为[29952, 2], 尺寸为[7488, 2], 尺寸为[1872, 2], 尺寸为[468, 2]]
+        """
         expanded_regress_ranges = [
             points[i].new_tensor(self.regress_ranges[i])[None].expand_as(
                 points[i]) for i in range(num_levels)
         ]
+        """
+        加每个特征图的点和回归范围拼接起来
+        """
         # concat all levels points and regress ranges
         concat_regress_ranges = torch.cat(expanded_regress_ranges, dim=0)
         concat_points = torch.cat(points, dim=0)
 
+        #* 存储每个特征图的点数
         # the number of points per img, per lvl
         num_points = [center.size(0) for center in points]
-
+        #* 对于PGD KITTI来说将每个gt的attr_label设置成-1
         if 'attr_labels' not in batch_gt_instances_3d[0]:
             for gt_instances_3d in batch_gt_instances_3d:
                 gt_instances_3d.attr_labels = \
@@ -1176,6 +1268,14 @@ class PGDHead(FCOSMono3DHead):
                         self.attr_background_label)
 
         # get labels and bbox_targets of each image
+        """
+        PGD KITTI:
+            bbox_targets_list: [39780, 4], 表示特征图的每个点在原图上对应的点距离对应的gt包围框的四个边的距离
+            labels_3d_list: [39780], 表示特征图的每个点在原图上对应的点的标签, 0~3, 3表示背景类
+            bbox_targets_3d_list: [39780, 7], 表示特征图的每个点在原图上对应回归值
+            centerness_targets_list: [39780], 表示特征图的每个点在原图上对应的centerness值
+            attr_targets_list: [39780], 全是-1
+        """
         _, bbox_targets_list, labels_3d_list, bbox_targets_3d_list, \
             centerness_targets_list, attr_targets_list = multi_apply(
                 self._get_target_single,
@@ -1186,6 +1286,7 @@ class PGDHead(FCOSMono3DHead):
                 num_points_per_lvl=num_points)
 
         # split to per img, per level
+        #* 拆分到每个层级, 每张图片
         bbox_targets_list = [
             bbox_targets.split(num_points, 0)
             for bbox_targets in bbox_targets_list
@@ -1237,5 +1338,29 @@ class PGDHead(FCOSMono3DHead):
                     bbox_targets_3d[:, -4:] = \
                         bbox_targets_3d[:, -4:] / self.strides[i]
             concat_lvl_bbox_targets_3d.append(bbox_targets_3d)
+        """
+        PGD KITTI的返回值:
+            concat_lvl_labels_3d: 长度为4(总共有四层特征)的列表, 列表中的每一个元素表示这一层中所有的图像上的点标签, 尺寸如下
+                [179712], 179712 = 6(batch_size) * 96(特征图高度) * 312(特征图宽度)
+                [44928], 44928 = 6(batch_size) * 48(特征图高度) * 156(特征图宽度)
+                [11232], 11232 = 6(batch_size) * 24(特征图高度) * 78(特征图宽度)
+                [2808], 2808 = 6(batch_size) * 12(特征图高度) * 39(特征图宽度)
+            concat_lvl_bbox_targets_3d: 长度为4(总共有四层特征)的列表, 列表中的每一个元素表示这一层中所有的图像上的点的回归值, 尺寸如下
+                11维表示[3Dx坐标偏差,3Dy坐标偏差, 深度, 尺寸(3), 航向角, 该点到2D边框的值(4)], 注意3D偏差和2D偏差都需要除步长
+                [179712, 11], 179712 = 6(batch_size) * 96(特征图高度) * 312(特征图宽度)
+                [44928, 11], 44928 = 6(batch_size) * 48(特征图高度) * 156(特征图宽度)
+                [11232, 11], 11232 = 6(batch_size) * 24(特征图高度) * 78(特征图宽度)
+                [2808, 11], 2808 = 6(batch_size) * 12(特征图高度) * 39(特征图宽度)
+            concat_lvl_centerness_targets: 长度为4(总共有四层特征)的列表, 列表中的每一个元素表示这一层中所有的图像上的点的centerness, 尺寸如下
+                [179712], 179712 = 6(batch_size) * 96(特征图高度) * 312(特征图宽度)
+                [44928], 44928 = 6(batch_size) * 48(特征图高度) * 156(特征图宽度)
+                [11232], 11232 = 6(batch_size) * 24(特征图高度) * 78(特征图宽度)
+                [2808], 2808 = 6(batch_size) * 12(特征图高度) * 39(特征图宽度)
+            concat_lvl_attr_targets: 长度为4(总共有四层特征)的列表, 列表中的每一个元素表示这一层中所有的图像上的点的attr label(全是-1), 尺寸如下
+                [179712], 179712 = 6(batch_size) * 96(特征图高度) * 312(特征图宽度)
+                [44928], 44928 = 6(batch_size) * 48(特征图高度) * 156(特征图宽度)
+                [11232], 11232 = 6(batch_size) * 24(特征图高度) * 78(特征图宽度)
+                [2808], 2808 = 6(batch_size) * 12(特征图高度) * 39(特征图宽度)
+        """
         return concat_lvl_labels_3d, concat_lvl_bbox_targets_3d, \
             concat_lvl_centerness_targets, concat_lvl_attr_targets

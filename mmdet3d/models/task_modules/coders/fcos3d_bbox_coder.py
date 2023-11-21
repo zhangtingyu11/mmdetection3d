@@ -129,7 +129,8 @@ class FCOS3DBBoxCoder(BaseBBoxCoder):
             dir_rot = limit_period(bbox[..., 6] - dir_offset, 0, np.pi)
             bbox[..., 6] = \
                 dir_rot + dir_offset + np.pi * dir_cls.to(bbox.dtype)
-
+        
+        #FIXME 这个对KITTI也适用嘛
         bbox[:, 6] = torch.atan2(centers2d[:, 0] - cam2img[0, 2],
                                  cam2img[0, 0]) + bbox[:, 6]
 

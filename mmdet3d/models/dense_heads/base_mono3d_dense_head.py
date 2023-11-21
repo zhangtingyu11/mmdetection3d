@@ -117,6 +117,41 @@ class BaseMono3DDenseHead(BaseModule, metaclass=ABCMeta):
                 [batch_size, 1, 15, 25]
                 [batch_size, 1, 8, 13]
         """
+        """
+        PGD中outs是一个长度为7的元组
+            outs[0]是一个长度为4的列表, 存放每个特征图预测的类别的得分, 尺寸分别如下:
+                [batch_size, 3, 96, 312]
+                [batch_size, 3, 48, 156]
+                [batch_size, 3, 24, 78]
+                [batch_size, 3, 12, 39]
+            #TODO outs[1]存放的是啥
+            outs[1]是一个长度为4的列表, 存放每个特征图预测的类别的得分, 尺寸分别如下:
+                [batch_size, 27, 96, 312]
+                [batch_size, 27, 48, 156]
+                [batch_size, 27, 24, 78]
+                [batch_size, 27, 12, 39]
+            outs[2]是一个长度为4的列表, 存放每个特征图预测的角度分类结果, 尺寸分别如下
+                [batch_size, 2, 96, 312]
+                [batch_size, 2, 48, 156]
+                [batch_size, 2, 24, 78]
+                [batch_size, 2, 12, 39]
+            outs[3]是一个长度为4的列表, 存放每个特征图预测的深度分类结果, 尺寸分别如下
+                [batch_size, 8, 96, 312]
+                [batch_size, 8, 48, 156]
+                [batch_size, 8, 24, 78]
+                [batch_size, 8, 12, 39]
+            outs[4]是一个长度为4的列表, 存放每个特征图预测的weight(深度的不确定性, log(不确定性), 可以参考MonoFlex的公式10), 尺寸分别如下
+                [batch_size, 1, 96, 312]
+                [batch_size, 1, 48, 156]
+                [batch_size, 1, 24, 78]
+                [batch_size, 1, 12, 39]
+            outs[5]是一个长度为4的列表, 存放每个特征图预测的attr_label, KITTI数据集没有, 全部为None
+            outs[6]是一个长度为4的列表, 存放每个特征图预测的centerness, 尺寸分别如下
+                [batch_size, 1, 96, 312]
+                [batch_size, 1, 48, 156]
+                [batch_size, 1, 24, 78]
+                [batch_size, 1, 12, 39]
+        """
         outs = self(x)
         batch_gt_instances_3d = []
         batch_gt_instances = []

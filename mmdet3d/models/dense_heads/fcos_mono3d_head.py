@@ -201,6 +201,10 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
             FCOS3D中self.conv_centerness_prev为3*3的步长为1的卷积(256->64), GN, ReLU
                     self.conv_centerness为1*1的步长为1的卷积(64->1)
             """
+            """
+            PGD KITTI中self.conv_centerness_prev为3*3的步长为1的卷积(256->256), GN, ReLU
+                       self.conv_centerness为1*1的步长为1的卷积(256->1)
+            """
             clone_reg_feat = reg_feat.clone()
             for conv_centerness_prev_layer in self.conv_centerness_prev:
                 clone_reg_feat = conv_centerness_prev_layer(clone_reg_feat)
@@ -219,6 +223,16 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
             bbox_pred: [batch_size, 9, 特征图高度, 特征图宽度], 深度和尺寸都求了exp()
             dir_cls_pred: [batch_size, 2, 特征图高度, 特征图宽度]
             attr_pred: [batch_size, 9, 特征图高度, 特征图宽度]
+            centerness: [batch_size, 1, 特征图高度, 特征图宽度]
+            cls_feat: [batch_size, 256, 特征图高度, 特征图宽度]
+            reg_feat: [batch_size, 256, 特征图高度, 特征图宽度]
+        """
+        """
+        PGD KITTI的返回值
+            cls_score: [batch_size, 3, 特征图高度, 特征图宽度]
+            bbox_pred: [batch_size, 27, 特征图高度, 特征图宽度], 尺寸 = 预测值.exp() * 该类别的平均尺寸, 深度是 预测值*16.32+28.01
+            dir_cls_pred: [batch_size, 2, 特征图高度, 特征图宽度]
+            attr_pred: None
             centerness: [batch_size, 1, 特征图高度, 特征图宽度]
             cls_feat: [batch_size, 256, 特征图高度, 特征图宽度]
             reg_feat: [batch_size, 256, 特征图高度, 特征图宽度]
@@ -985,28 +999,38 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
             gt_bboxes[:, 3] - gt_bboxes[:, 1])
         areas = areas[None].repeat(num_points, 1)
         #* FCOS3D: [30929, 2]->[30929, gt个数, 2]
+        #* PGD KITTI: [39780, 2]->[39780, gt个数, 2]
         regress_ranges = regress_ranges[:, None, :].expand(
             num_points, num_gts, 2)
         #* FCOS3D: [30929, 4]->[30929, gt个数, 4]
+        #* PGD KITTI: [39780, 4]->[39780, gt个数, 4]
         gt_bboxes = gt_bboxes[None].expand(num_points, num_gts, 4)
         #* FCOS3D: [30929, 2]->[30929, gt个数, 2]
+        #* PGD KITTI: [39780, 2]->[39780, gt个数, 2]
         centers_2d = centers_2d[None].expand(num_points, num_gts, 2)
         #* FCOS3D: [30929, 9]->[30929, gt个数, 9]
+        #* PGD KITTI: [39780, 7]->[39780, gt个数, 7]
         gt_bboxes_3d = gt_bboxes_3d[None].expand(num_points, num_gts,
                                                  self.bbox_code_size)
         #* FCOS3D: [30929, 1]->[30929, gt个数, 1]
+        #* PGD KITTI: [39780, 1]->[39780, gt个数, 1]
         depths = depths[None, :, None].expand(num_points, num_gts, 1)
         xs, ys = points[:, 0], points[:, 1]
         #* FCOS3D: [30929, gt个数], 特征图的点在原图上对应的x坐标
+        #* PGD KITTI: [39780, gt个数], 特征图的点在原图上对应的x坐标
         xs = xs[:, None].expand(num_points, num_gts)
         #* FCOS3D: [30929, gt个数], 特征图的点在原图上对应的y坐标
+        #* PGD KITTI: [39780, gt个数], 特征图的点在原图上对应的y坐标
         ys = ys[:, None].expand(num_points, num_gts)
 
         #* FCOS3D: [30929, gt个数, 1], 特征图对应的原图上的x坐标和3D中心点投影到图像上的2D中心点x坐标的差
+        #* PGD KITTI: [39780, gt个数, 1], 特征图对应的原图上的x坐标和3D中心点投影到图像上的2D中心点x坐标的差
         delta_xs = (xs - centers_2d[..., 0])[..., None]
         #* FCOS3D: [30929, gt个数, 1], 特征图对应的原图上的y坐标和3D中心点投影到图像上的2D中心点y坐标的差
+        #* PGD KITTI: [39780, gt个数, 1], 特征图对应的原图上的y坐标和3D中心点投影到图像上的2D中心点y坐标的差
         delta_ys = (ys - centers_2d[..., 1])[..., None]
-        #* 目标[30929, gt个数, 9], 9对应[投影的3D中心点x偏移, 投影的3D中心点y偏移, 深度, l, h, w, 角度, vx, vy]
+        #* FCOS3D: 目标[30929, gt个数, 9], 9对应[投影的3D中心点x偏移, 投影的3D中心点y偏移, 深度, l, h, w, 角度, vx, vy]
+        #* PGD KITTI: 目标[39780, gt个数, 7], 9对应[投影的3D中心点x偏移, 投影的3D中心点y偏移, 深度, l, h, w, 角度]
         bbox_targets_3d = torch.cat(
             (delta_xs, delta_ys, depths, gt_bboxes_3d[..., 3:]), dim=-1)
 
@@ -1018,7 +1042,8 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
         top = ys - gt_bboxes[..., 1]
         #* 到包围框下边的距离
         bottom = gt_bboxes[..., 3] - ys
-        #* [30929, gt个数, 4], 到2D包围框四个边的距离
+        #* FCOS3D: [30929, gt个数, 4], 到2D包围框四个边的距离
+        #* PGD KITTI: [39780, gt个数, 4], 到2D包围框四个边的距离
         bbox_targets = torch.stack((left, top, right, bottom), -1)
 
         assert self.center_sampling is True, 'Setting center_sampling to '\
@@ -1036,7 +1061,7 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
             lvl_end = lvl_begin + num_points_lvl
             stride[lvl_begin:lvl_end] = self.strides[lvl_idx] * radius
             lvl_begin = lvl_end
-        #* 中心点会在一定的范围内, FCOS3D中是1.5*stride
+        #* 中心点会在一定的范围内, FCOS3D, PGD KITTI中是1.5*stride
         center_gts[..., 0] = center_xs - stride
         center_gts[..., 1] = center_ys - stride
         center_gts[..., 2] = center_xs + stride
@@ -1052,18 +1077,22 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
         cb_dist_bottom = center_gts[..., 3] - ys
         center_bbox = torch.stack(
             (cb_dist_left, cb_dist_top, cb_dist_right, cb_dist_bottom), -1)
-        #* 找到每个点在不在包围框里面, 如果在就是True, 尺寸为[30929, gt个数]
+        #* FCOS3D: 找到每个点在不在包围框里面, 如果在就是True, 尺寸为[30929, gt个数]
+        #* PGD KITTI: 找到每个点在不在包围框里面, 如果在就是True, 尺寸为[39780, gt个数]
+        
         inside_gt_bbox_mask = center_bbox.min(-1)[0] > 0
 
         # condition2: limit the regression range for each location
-        #* 计算偏差在不在可允许的范围内, inside_regress_range的尺寸为[30929, gt个数]
+        #* FCOS3D: 计算偏差在不在可允许的范围内, inside_regress_range的尺寸为[30929, gt个数]
+        #* PGD KITTI: 计算偏差在不在可允许的范围内, inside_regress_range的尺寸为[39780, gt个数]
         max_regress_distance = bbox_targets.max(-1)[0]
         inside_regress_range = (
             (max_regress_distance >= regress_ranges[..., 0])
             & (max_regress_distance <= regress_ranges[..., 1]))
 
         # center-based criterion to deal with ambiguity
-        #* dists为x, y坐标的偏差的距离, sqrt(delta_xs*delta_xs + delta_ys*delta_ys), 尺寸为[30929, gt个数]
+        #* FCOS3D: dists为x, y坐标的偏差的距离, sqrt(delta_xs*delta_xs + delta_ys*delta_ys), 尺寸为[30929, gt个数]
+        #* PGD KITTI: dists为x, y坐标的偏差的距离, sqrt(delta_xs*delta_xs + delta_ys*delta_ys), 尺寸为[39780, gt个数]
         dists = torch.sqrt(torch.sum(bbox_targets_3d[..., :2]**2, dim=-1))
         dists[inside_gt_bbox_mask == 0] = INF
         dists[inside_regress_range == 0] = INF
@@ -1085,7 +1114,7 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
             torch.sum(bbox_targets_3d[..., :2]**2,
                       dim=-1)) / (1.414 * stride[:, 0])
         # [N, 1] / [N, 1]
-        #* 参考论文是 exp(-alpha * (delta_x*delta_x + delta_y*delta_y)), 和论文中的公式略有出入
+        #* 参考论文是 exp(-alpha * (delta_x*delta_x + delta_y*delta_y)), 和论文中的公式略有出入(这边多了个sqrt)
         centerness_targets = torch.exp(-self.centerness_alpha * relative_dists)
 
         """
@@ -1096,6 +1125,15 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
             bbox_targets_3d: [30929, 9], 表示特征图的每个点在原图上对应回归值
             centerness_targets: [30929], 表示特征图的每个点在原图上对应的centerness值
             attr_labels: [30929], 表示特征图的每个点在原图上对应的attr_label, 0~9, 9表示背景类
+        """
+        """
+        PGD KITTI的返回值:
+            labels: [39780], 表示特征图的每个点在原图上对应的点的标签, 0~3, 3表示背景类
+            bbox_targets: [39780, 4], 表示特征图的每个点在原图上对应的点距离对应的gt包围框的四个边的距离
+            labels_3d: [39780], 表示特征图的每个点在原图上对应的点的标签, 0~3, 3表示背景类
+            bbox_targets_3d: [39780, 7], 表示特征图的每个点在原图上对应回归值
+            centerness_targets: [39780], 表示特征图的每个点在原图上对应的centerness值
+            attr_labels: [39780], 全是-1
         """
         return labels, bbox_targets, labels_3d, bbox_targets_3d, \
             centerness_targets, attr_labels

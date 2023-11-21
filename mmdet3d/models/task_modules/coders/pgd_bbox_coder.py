@@ -47,19 +47,22 @@ class PGDBBoxCoder(FCOS3DBBoxCoder):
         """
         clone_bbox = bbox.clone()
         if pred_keypoints:
-            scale_kpts = scale[3]
+            scale_kpts = scale[3]       #* scale_kpts是可学习的
             # 2 dimension of offsets x 8 corners of a 3D bbox
+            #* PGD的包围框[:, self.bbox_code_size:self.bbox_code_size + 16]存的是包围框8个角点的2D坐标, 作用tanh
             bbox[:, self.bbox_code_size:self.bbox_code_size + 16] = \
                 torch.tanh(scale_kpts(clone_bbox[
                     :, self.bbox_code_size:self.bbox_code_size + 16]).float())
 
         if pred_bbox2d:
-            scale_bbox2d = scale[-1]
+            scale_bbox2d = scale[-1]  #* scale_bbox2dscale_bbox2d是可学习的
             # The last four dimensions are offsets to four sides of a 2D bbox
+            #* PGD的包围框[:, -4:]存的是到2D包围框的四条边的距离
             bbox[:, -4:] = scale_bbox2d(clone_bbox[:, -4:]).float()
 
         if self.norm_on_bbox:
             if pred_bbox2d:
+                #* PGD的包围框[:, -4:]存的是到2D包围框的四条边的距离, 作用ReLU
                 bbox[:, -4:] = F.relu(bbox.clone()[:, -4:])
             if not training:
                 if pred_keypoints:
@@ -94,8 +97,10 @@ class PGDBBoxCoder(FCOS3DBBoxCoder):
             depth_multiplier = depth_unit * \
                 depth_cls_preds.new_tensor(
                     list(range(num_depth_cls))).reshape([1, -1])
+            #* PGD KITTI中, 深度0~70, 划分8份, 0, 10, ..., 70, 计算每个位置的期望, 用加权平均作为最后的深度
             prob_depth_preds = (F.softmax(depth_cls_preds.clone(), dim=-1) *
                                 depth_multiplier).sum(dim=-1)
+            #* PGD KITTI中, 返回值为尺寸为[正样本个数]
             return prob_depth_preds
         elif division == 'linear':
             split_pts = depth_cls_preds.new_tensor(list(
