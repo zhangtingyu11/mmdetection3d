@@ -378,7 +378,7 @@ class AnchorFreeMono3DHead(BaseMono3DDenseHead):
             [batch_size, 256, 8, 13]
         """
         """
-        PGD的检测头的输入会有四次, 尺寸分别是
+        PGD KITTI的检测头的输入会有四次, 尺寸分别是
             [batch_size, 256, 96, 312]
             [batch_size, 256, 48, 156]
             [batch_size, 256, 24, 78]
