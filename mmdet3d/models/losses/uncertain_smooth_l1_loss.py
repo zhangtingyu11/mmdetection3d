@@ -37,7 +37,8 @@ def uncertain_smooth_l1_loss(pred: Tensor,
     diff = torch.abs(pred - target)
     loss = torch.where(diff < beta, 0.5 * diff * diff / beta,
                        diff - 0.5 * beta)
-    #* 可以参考MonoFlex(Objects are Different: Flexible Monocular 3D Object Detection)的公式10, sigma是预测的不确定性的log值
+    #* 可以参考PGD附录的公式5, sigma是预测的不确定性的log值, 即论文中的s, 
+    #* 那么loss可以表示为 SmoothL1(.)/2 * exp(-s) + s/2, 1/2可以当作权重, 就得到了下面的式子
     loss = torch.exp(-sigma) * loss + alpha * sigma
 
     return loss
