@@ -55,7 +55,7 @@ class PGDBBoxCoder(FCOS3DBBoxCoder):
                     :, self.bbox_code_size:self.bbox_code_size + 16]).float())
 
         if pred_bbox2d:
-            scale_bbox2d = scale[-1]  #* scale_bbox2dscale_bbox2d是可学习的
+            scale_bbox2d = scale[-1]  #* scale_bbox2d是可学习的
             # The last four dimensions are offsets to four sides of a 2D bbox
             #* PGD的包围框[:, -4:]存的是到2D包围框的四条边的距离
             bbox[:, -4:] = scale_bbox2d(clone_bbox[:, -4:]).float()

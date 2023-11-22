@@ -81,6 +81,7 @@ class FCOS3DBBoxCoder(BaseBBoxCoder):
             assert len(self.base_depths) == cls_score.shape[1], \
                 'The number of multi-class depth priors should be equal to ' \
                 'the number of categories.'
+            #* 每个类别的深度都有自己的mean和std
             indices = cls_score.max(dim=1)[1]
             depth_priors = cls_score.new_tensor(
                 self.base_depths)[indices, :].permute(0, 3, 1, 2)

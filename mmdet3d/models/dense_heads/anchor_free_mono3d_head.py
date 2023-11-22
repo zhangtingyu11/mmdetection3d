@@ -384,6 +384,14 @@ class AnchorFreeMono3DHead(BaseMono3DDenseHead):
             [batch_size, 256, 24, 78]
             [batch_size, 256, 12, 39]
         """
+        """
+        PGD Nusc的检测头的输入会有五次, 尺寸分别是
+            [batch_size, 256, 116, 200]
+            [batch_size, 256, 58, 100]
+            [batch_size, 256, 29, 50]
+            [batch_size, 256, 15, 25]
+            [batch_size, 256, 8, 13]
+        """
         cls_feat = x
         reg_feat = x
 
@@ -404,6 +412,13 @@ class AnchorFreeMono3DHead(BaseMono3DDenseHead):
             ConvModule1:
                 一个3*3的步长为1的DCNv2(256->256), GroupNorm, ReLU
         """
+        """
+        PGD Nusc的self.cls_convs包含两个ConvModule:
+            ConvModule0:
+                一个3*3的步长为1的卷积(256->256), GroupNorm, ReLU
+            ConvModule1:
+                一个3*3的步长为1的DCNv2(256->256), GroupNorm, ReLU
+        """
         for cls_layer in self.cls_convs:
             cls_feat = cls_layer(cls_feat)
         # clone the cls_feat for reusing the feature map afterwards
@@ -417,6 +432,9 @@ class AnchorFreeMono3DHead(BaseMono3DDenseHead):
         """
         PGD KITTI中self.conv_cls_prev包含一个3*3的步长为1的卷积(256->256), GN, ReLU
         """
+        """
+        PGD Nusc中self.conv_cls_prev包含一个3*3的步长为1的卷积(256->256), GN, ReLU
+        """
         for conv_cls_prev_layer in self.conv_cls_prev:
             clone_cls_feat = conv_cls_prev_layer(clone_cls_feat)
         """
@@ -427,6 +445,9 @@ class AnchorFreeMono3DHead(BaseMono3DDenseHead):
         """
         """
         PGD KITTI中self.conv_cls为1*1的步长为1的卷积(256->3)
+        """
+        """
+        PGD Nusc中self.conv_cls为1*1的步长为1的卷积(256->10)
         """
         cls_score = self.conv_cls(clone_cls_feat)
 
@@ -442,6 +463,13 @@ class AnchorFreeMono3DHead(BaseMono3DDenseHead):
         """
         """
         PGD KITTI中self.reg_convs包含两个ConvModule
+            ConvModule0:
+                一个3*3的步长为1的卷积(256->256), GN, ReLU
+            ConvModule1:
+                一个3*3的步长为1的DCNv2(256->256), GN, ReLU
+        """
+        """
+        PGD Nusc中self.reg_convs包含两个ConvModule
             ConvModule0:
                 一个3*3的步长为1的卷积(256->256), GN, ReLU
             ConvModule1:
@@ -467,6 +495,14 @@ class AnchorFreeMono3DHead(BaseMono3DDenseHead):
             其中0~5个组都需要经过3*3的步长为1的卷积(256->256), GN, ReLU, 1*1的步长为1的卷积(256->预测的维度)
             将6个组的输出进行拼接, 得到预测的结果, 尺寸为[batch_size, 27, 特征图高度, 特征图宽度]
         """
+        """
+        PGD Nusc:
+            总共要预测6个组, 维度为[2, 1, 3, 1, 2, 4]
+            其中0~3个组都需要经过3*3的步长为1的卷积(256->256), GN, ReLU, 1*1的步长为1的卷积(256->预测的维度)
+            第4个组, 只经过一个1*1的步长为1的的卷积(256->2)
+            第5个组经过3*3的步长为1的卷积(256->256), GN, ReLU, 1*1的步长为1的卷积(256->预测的维度)
+            将6个组的输出进行拼接, 得到预测的结果, 尺寸为[batch_size, 13, 特征图高度, 特征图宽度]
+        """
         for i in range(len(self.group_reg_dims)):
             # clone the reg_feat for reusing the feature map afterwards
             clone_reg_feat = reg_feat.clone()
@@ -484,8 +520,12 @@ class AnchorFreeMono3DHead(BaseMono3DDenseHead):
                     self.conv_dir_cls为1*1的步长为1的卷积(256->2)
             """
             """
-            PGD KITTI中self.conv_dir_cls_prev3*3步长为1的卷积(256->256), GN, ReLU
+            PGD KITTI中self.conv_dir_cls_prev为3*3步长为1的卷积(256->256), GN, ReLU
                        self.conv_dir_cls为1*1的步长为1的卷积(256->2)
+            """
+            """
+            PGD Nusc中self.conv_dir_cls_prev为3*3步长为1的卷积(256->256), GN, ReLU
+                      self.conv_dir_cls为1*1的步长为1的卷积(256->2)
             """
             for conv_dir_cls_prev_layer in self.conv_dir_cls_prev:
                 clone_reg_feat = conv_dir_cls_prev_layer(clone_reg_feat)
@@ -497,6 +537,10 @@ class AnchorFreeMono3DHead(BaseMono3DDenseHead):
             clone_cls_feat = cls_feat.clone()
             """
             FCOS3D中, self.conv_attr_prev为3*3的步长为1的卷积(256->256), GN, ReLU
+                      self.conv_attr为1*1的步长为1的卷积(256->9), 因为有8个子列表加一个None
+            """
+            """
+            PGD Nusc中self.conv_attr_prev为3*3步长为1的卷积(256->256), GN, ReLU
                       self.conv_attr为1*1的步长为1的卷积(256->9), 因为有8个子列表加一个None
             """
             for conv_attr_prev_layer in self.conv_attr_prev:
@@ -517,6 +561,15 @@ class AnchorFreeMono3DHead(BaseMono3DDenseHead):
             bbox_pred: [batch_size, 27, 特征图高度, 特征图宽度]
             dir_cls_pred: [batch_size, 2, 特征图高度, 特征图宽度]
             attr_pred: None
+            cls_feat: [batch_size, 256, 特征图高度, 特征图宽度]
+            reg_feat: [batch_size, 256, 特征图高度, 特征图宽度]
+        """
+        """
+        对于PGD Nusc来说, 输出如下
+            cls_score: [batch_size, 10, 特征图高度, 特征图宽度]
+            bbox_pred: [batch_size, 13, 特征图高度, 特征图宽度]
+            dir_cls_pred: [batch_size, 2, 特征图高度, 特征图宽度]
+            attr_pred: [batch_size, 9, 特征图高度, 特征图宽度]
             cls_feat: [batch_size, 256, 特征图高度, 特征图宽度]
             reg_feat: [batch_size, 256, 特征图高度, 特征图宽度]
         """

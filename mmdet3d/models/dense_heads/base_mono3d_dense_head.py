@@ -118,14 +118,13 @@ class BaseMono3DDenseHead(BaseModule, metaclass=ABCMeta):
                 [batch_size, 1, 8, 13]
         """
         """
-        PGD中outs是一个长度为7的元组
+        PGD KITTI中outs是一个长度为7的元组
             outs[0]是一个长度为4的列表, 存放每个特征图预测的类别的得分, 尺寸分别如下:
                 [batch_size, 3, 96, 312]
                 [batch_size, 3, 48, 156]
                 [batch_size, 3, 24, 78]
                 [batch_size, 3, 12, 39]
-            #TODO outs[1]存放的是啥
-            outs[1]是一个长度为4的列表, 存放每个特征图预测的类别的得分, 尺寸分别如下:
+            outs[1]是一个长度为4的列表, 存放每个特征图预测的回归值[3D中心点投影的偏差x, 3D中心点投影的偏差y, 深度, 尺寸(3), 航向, 8个角点坐标(16), 点到2D包围框四个边的距离(4)], 尺寸分别如下:
                 [batch_size, 27, 96, 312]
                 [batch_size, 27, 48, 156]
                 [batch_size, 27, 24, 78]
@@ -151,6 +150,46 @@ class BaseMono3DDenseHead(BaseModule, metaclass=ABCMeta):
                 [batch_size, 1, 48, 156]
                 [batch_size, 1, 24, 78]
                 [batch_size, 1, 12, 39]
+        """
+        """
+        PGD Nusc中outs是一个长度为7的元组
+            outs[0]是一个长度为5的列表, 存放每个特征图预测的类别的得分, 尺寸分别如下:
+                [batch_size, 10, 116, 200]
+                [batch_size, 10, 58, 100]
+                [batch_size, 10, 29, 50]
+                [batch_size, 10, 15, 25]
+                [batch_size, 10, 8, 13]
+            outs[1]是一个长度为5的列表, 存放每个特征图预测的回归值[3D中心点投影的偏差x, 3D中心点投影的偏差y, 深度, 尺寸(3), 航向, 速度(2), 点到2D包围框四个边的距离(4)], 尺寸分别如下:
+                [batch_size, 13, 116, 200]
+                [batch_size, 13, 58, 100]
+                [batch_size, 13, 29, 50]
+                [batch_size, 13, 15, 25]
+                [batch_size, 13, 8, 13]
+            outs[2]是一个长度为5的列表, 存放每个特征图预测的角度分类结果, 尺寸分别如下
+                [batch_size, 2, 116, 200]
+                [batch_size, 2, 58, 100]
+                [batch_size, 2, 29, 50]
+                [batch_size, 2, 15, 25]
+                [batch_size, 2, 8, 13]
+            outs[3]是一个长度为5的列表, 存放每个特征图预测的深度分类结果, 尺寸分别如下
+                [batch_size, 6, 116, 200]
+                [batch_size, 6, 58, 100]
+                [batch_size, 6, 29, 50]
+                [batch_size, 6, 15, 25]
+                [batch_size, 6, 8, 13]
+            outs[4]是一个长度为5的列表, 存放每个特征图预测的weight(深度的不确定性, log(不确定性), 可以参考MonoFlex的公式10), 全部为None
+            outs[5]是一个长度为5的列表, 存放每个特征图预测的attr_label, 尺寸分别如下:
+                [batch_size, 9, 116, 200]
+                [batch_size, 9, 58, 100]
+                [batch_size, 9, 29, 50]
+                [batch_size, 9, 15, 25]
+                [batch_size, 9, 8, 13]
+            outs[6]是一个长度为5的列表, 存放每个特征图预测的centerness, 尺寸分别如下
+                [batch_size, 1, 116, 200]
+                [batch_size, 1, 58, 100]
+                [batch_size, 1, 29, 50]
+                [batch_size, 1, 15, 25]
+                [batch_size, 1, 8, 13]
         """
         outs = self(x)
         batch_gt_instances_3d = []

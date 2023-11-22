@@ -358,7 +358,7 @@ class SingleStageMono3DDetector(SingleStageDetector):
                 BottleNeck1:
                     输入是x, 尺寸为[batch_size, 1024, 58, 100]
                     x经过一个1*1的步长为2的卷积(1024->256), 一个BatchNorm2d, 一个ReLU, 得到out, 尺寸为[batch_size, 256, 58, 100]
-                    out经过一个3*3的步长为1的卷积(256->256), 一个BatchNorm2d, 一个ReLU, 更新out, 尺寸为[batch_size, 256, 58, 100]
+                    out经过一个3*3的步长为1的DCNv2(256->256), 一个BatchNorm2d, 一个ReLU, 更新out, 尺寸为[batch_size, 256, 58, 100]
                     out经过一个1*1的步长为1的卷积(256->1024), 一个BacthNorm2d, 一个ReLU, 更新out, 尺寸为[batch_size, 1024, 58, 100]
                     
                     将out和x相加, 送入ReLU中, 得到最终的out, 尺寸为[batch_size, 1024, 58, 100]
@@ -376,7 +376,7 @@ class SingleStageMono3DDetector(SingleStageDetector):
                 BottleNeck1:
                     输入是x, 尺寸为[batch_size, 2048, 29, 50]
                     x经过一个1*1的步长为2的卷积(2048->512), 一个BatchNorm2d, 一个ReLU, 得到out, 尺寸为[batch_size, 512, 29, 50]
-                    out经过一个3*3的步长为1的卷积(512->512), 一个BatchNorm2d, 一个ReLU, 更新out, 尺寸为[batch_size, 512, 29, 50]
+                    out经过一个3*3的步长为1的DCNv2(512->512), 一个BatchNorm2d, 一个ReLU, 更新out, 尺寸为[batch_size, 512, 29, 50]
                     out经过一个1*1的步长为1的卷积(512->2048), 一个BacthNorm2d, 一个ReLU, 更新out, 尺寸为[batch_size, 2048, 29, 50]
                     
                     将out和x相加, 送入ReLU中, 得到最终的out, 尺寸为[batch_size, 2048, 29, 50]
