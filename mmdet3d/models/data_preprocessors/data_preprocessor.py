@@ -114,7 +114,7 @@ class Det3DDataPreprocessor(DetDataPreprocessor):
             bgr_to_rgb=bgr_to_rgb,
             rgb_to_bgr=rgb_to_bgr,
             boxtype2tensor=boxtype2tensor,
-            non_blocking=non_blocking,
+            # non_blocking=non_blocking,
             batch_augments=batch_augments)
         self.voxel = voxel
         self.voxel_type = voxel_type

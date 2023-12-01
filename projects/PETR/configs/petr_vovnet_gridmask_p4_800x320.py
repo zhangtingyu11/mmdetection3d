@@ -204,7 +204,7 @@ test_pipeline = [
 ]
 
 train_dataloader = dict(
-    batch_size=1,
+    batch_size=6,
     num_workers=4,
     dataset=dict(
         type=dataset_type,
